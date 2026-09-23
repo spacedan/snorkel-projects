@@ -1,0 +1,217 @@
+{
+  "bundle_id": "SB-20260913-0026",
+  "schema_version": "2.0",
+  "submitted_by": "platform-ops",
+  "debug": true,
+  "cluster": {
+    "name": "ocp-prod-east",
+    "version": "4.16.12",
+    "api_url": "https://api.ocp-prod-east.mesa.internal:6443",
+    "infra_id": "ocp-prod-east-x7k2m",
+    "mirror_registry": "registry.mesa.internal:8443",
+    "collected_by": "MESA\\d.okafor"
+  },
+  "evidence": {
+    "resources": [
+      {
+        "resource_id": "RES-00412",
+        "kind": "Deployment",
+        "namespace": "fin-ledger-prod",
+        "name": "ledger-api",
+        "condition": "CrashLoopBackOff",
+        "node": "worker-04.ocp-prod-east.mesa.internal",
+        "replicas": {
+          "desired": 6,
+          "ready": 0
+        },
+        "spec": {
+          "containers": [
+            {
+              "name": "api",
+              "image": "registry.mesa.internal:8443/fin/ledger-api@sha256:4b17d90ec2f3a6518d04bb7c91e2f5a3308914aef6b2c7d1983f0a4b5c6d7e82",
+              "env": [
+                {
+                  "name": "DB_HOST",
+                  "value": "postgres-primary.fin-ledger-prod.svc.cluster.local"
+                },
+                {
+                  "name": "DB_PASSWORD",
+                  "value": "Pg!7yhTr2026mesa"
+                },
+                {
+                  "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                  "value": "http://otel-collector.observability.svc.cluster.local:4318"
+                },
+                {
+                  "name": "LOG_LEVEL",
+                  "value": "debug"
+                }
+              ],
+              "volumeMounts": [
+                {
+                  "name": "reports",
+                  "mountPath": "/var/exports/ledger"
+                }
+              ]
+            },
+            {
+              "name": "logshipper",
+              "image": "registry.redhat.io/ubi9/ubi-minimal@sha256:c31b8f2a4d6e7093ba15cc84f2e6d7a95013b8ce4f7a2d6019e3b5c8a4f1d207",
+              "env": [
+                {
+                  "name": "FLUENT_ENDPOINT",
+                  "value": "fluentd.observability.svc.cluster.local:24224"
+                }
+              ],
+              "volumeMounts": []
+            }
+          ],
+          "imagePullSecrets": [
+            {
+              "name": "mesa-mirror-creds"
+            }
+          ]
+        }
+      },
+      {
+        "resource_id": "RES-00559",
+        "kind": "Pod",
+        "namespace": "fin-ledger-prod",
+        "name": "ledger-api-7d9c4b8f5-2xkqp",
+        "condition": "CrashLoopBackOff",
+        "node": "worker-04.ocp-prod-east.mesa.internal",
+        "replicas": null,
+        "spec": {
+          "containers": [
+            {
+              "name": "api",
+              "image": "registry.mesa.internal:8443/fin/ledger-api@sha256:4b17d90ec2f3a6518d04bb7c91e2f5a3308914aef6b2c7d1983f0a4b5c6d7e82",
+              "env": [
+                {
+                  "name": "POD_IP",
+                  "value": "10.128.7.212"
+                }
+              ],
+              "volumeMounts": []
+            }
+          ],
+          "imagePullSecrets": [
+            {
+              "name": "mesa-mirror-creds"
+            }
+          ]
+        }
+      },
+      {
+        "resource_id": "RES-00501",
+        "kind": "StatefulSet",
+        "namespace": "observability",
+        "name": "otel-collector",
+        "condition": "FailedMount",
+        "node": "worker-07.ocp-prod-east.mesa.internal",
+        "replicas": {
+          "desired": 3,
+          "ready": 1
+        },
+        "spec": {
+          "containers": [
+            {
+              "name": "collector",
+              "image": "ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib@sha256:7e1a9c04b2d58f3671ea0c4b9d82f5107cc3a6be814d029f5b7e6c3a1d80f294",
+              "env": [
+                {
+                  "name": "STORAGE_PATH",
+                  "value": "/var/lib/otel"
+                }
+              ],
+              "volumeMounts": [
+                {
+                  "name": "spool",
+                  "mountPath": "/var/lib/otel"
+                }
+              ]
+            }
+          ],
+          "imagePullSecrets": []
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "name": "worker-04.ocp-prod-east.mesa.internal",
+        "internal_ip": "10.21.34.14",
+        "mac": "3c:ec:ef:20:5d:91",
+        "kubelet": "v1.29.7",
+        "os": "RHCOS 416.94.202609081521-0",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "False",
+            "message": "kubelet has disk pressure: /var/lib/kubelet on worker-04.ocp-prod-east.mesa.internal at 94%"
+          },
+          {
+            "type": "DiskPressure",
+            "status": "True",
+            "message": "imagefs usage 94%"
+          }
+        ]
+      },
+      {
+        "name": "worker-07.ocp-prod-east.mesa.internal",
+        "internal_ip": "10.21.34.17",
+        "mac": "3c:ec:ef:20:5d:a4",
+        "kubelet": "v1.29.7",
+        "os": "RHCOS 416.94.202609081521-0",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "message": "kubelet is posting ready status"
+          }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "event_id": "EV-88413",
+        "reason": "FailedMount",
+        "namespace": "observability",
+        "count": 44,
+        "message": "Unable to attach or mount volumes: mount failed: nfs-prod-01.mesa.internal:/exports/otel-spool on worker-07.ocp-prod-east.mesa.internal"
+      },
+      {
+        "event_id": "EV-88420",
+        "reason": "BackOff",
+        "namespace": "fin-ledger-prod",
+        "count": 812,
+        "message": "Back-off restarting failed container api in pod ledger-api-7d9c4b8f5-2xkqp_fin-ledger-prod(8f21c4ad-3b77-4e01-9c6e-1180a4f2ee55)"
+      }
+    ],
+    "log_excerpts": [
+      {
+        "source": "ledger-api",
+        "line": "2026-09-13T02:41:09Z ERROR startup: failed to reach https://vault.mesa.internal:8200/v1/secret/data/fin/ledger (status 403, token hvs.CAESIJx9Qm2rT4kLp8WdN1zY) from pod 10.128.7.212"
+      },
+      {
+        "source": "machine-config-daemon",
+        "line": "2026-09-13T02:39:55Z error: could not pull registry.mesa.internal:8443/fin/ledger-api@sha256:4b17d90ec2f3a6518d04bb7c91e2f5a3308914aef6b2c7d1983f0a4b5c6d7e82 : x509: certificate signed by unknown authority"
+      },
+      {
+        "source": "kubelet",
+        "line": "2026-09-13T02:40:02Z W eviction_manager.go:604 eviction manager: pod ledger-api-7d9c4b8f5-2xkqp failed to evict; matches upstream issue https://github.com/openshift/machine-config-operator/issues/4412 and errata RHBA-2026:4471"
+      },
+      {
+        "source": "coredns",
+        "line": "2026-09-13T02:41:12Z [INFO] 10.128.7.212:53144 - 4411 \"PTR IN 212.7.128.10.in-addr.arpa. udp 44 false 512\" NXDOMAIN qr,aa,rd 128 0.000121s"
+      },
+      {
+        "source": "coredns",
+        "line": "2026-09-13T02:41:13Z [INFO] 10.128.7.212:40981 - 7730 \"PTR IN 69.194.101.151.in-addr.arpa. udp 45 false 512\" NOERROR qr,rd,ra 112 0.018204s"
+      },
+      {
+        "source": "metallb-controller",
+        "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned 10.21.40.10-10.21.40.50; next free 10.21.40.23"
+      }
+    ]
+  }
+}

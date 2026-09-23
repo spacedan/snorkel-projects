@@ -1,0 +1,7 @@
+out/
+__pycache__/
+.git
+*.log
+*.pyc
+*.pyo
+.DS_Store
