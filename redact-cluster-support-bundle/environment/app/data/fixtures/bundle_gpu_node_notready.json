@@ -1,0 +1,184 @@
+{
+  "bundle_id": "SB-20260916-0011",
+  "schema_version": "2.0",
+  "submitted_by": "edge-oncall",
+  "debug": false,
+  "cluster": {
+    "name": "ocp-edge-nw",
+    "version": "4.16.14",
+    "api_url": "https://api.ocp-edge-nw.mesa.internal:6443",
+    "infra_id": "ocp-edge-nw-7tq9c",
+    "mirror_registry": "mirror.corp.example.net:5000",
+    "collected_by": "CORP\\svc_gather"
+  },
+  "evidence": {
+    "resources": [
+      {
+        "resource_id": "RES-20311",
+        "kind": "DaemonSet",
+        "namespace": "nvidia-gpu-operator",
+        "name": "nvidia-driver-infra-gpu-01",
+        "condition": "CrashLoopBackOff",
+        "node": "infra-gpu-01.ocp-edge-nw.mesa.internal",
+        "replicas": {
+          "desired": 2,
+          "ready": 1
+        },
+        "spec": {
+          "containers": [
+            {
+              "name": "driver",
+              "image": "mirror.corp.example.net:5000/nvidia/driver@sha256:69f45e398081682e9e6f33313cf6e93c73104004b8d08b778393ff23d2eb0be4",
+              "env": [
+                {
+                  "name": "NGC_API_KEY",
+                  "value": "nvapi-3Tq8ZrLw0PdK6sYv"
+                },
+                {
+                  "name": "DRIVER_BRANCH",
+                  "value": "550.90-lts"
+                }
+              ],
+              "volumeMounts": []
+            }
+          ],
+          "imagePullSecrets": [
+            {
+              "name": "edge-mirror-creds"
+            }
+          ]
+        }
+      },
+      {
+        "resource_id": "RES-20340",
+        "kind": "Pod",
+        "namespace": "nvidia-gpu-operator",
+        "name": "gpu-feature-discovery-x2v9k",
+        "condition": "PodPending",
+        "node": "infra-gpu-02.ocp-edge-nw.mesa.internal",
+        "replicas": null,
+        "spec": {
+          "containers": [
+            {
+              "name": "gfd",
+              "image": "ghcr.io/nvidia/gpu-feature-discovery@sha256:c1ce3550ca3810b9925708dc0eefd6c621e443c6aa3e5840fe3fe00d291dc890",
+              "env": [],
+              "volumeMounts": []
+            }
+          ]
+        }
+      },
+      {
+        "resource_id": "RES-20355",
+        "kind": "Deployment",
+        "namespace": "openshift-ingress",
+        "name": "router-default",
+        "condition": "NodeNotReady",
+        "node": "infra-gpu-01.ocp-edge-nw.mesa.internal",
+        "replicas": {
+          "desired": 2,
+          "ready": 1
+        },
+        "spec": {
+          "containers": [
+            {
+              "name": "router",
+              "image": "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:74c95604043427f0bee1d0e16bfa53afd537f736ad0073c4cc4e1ccb3a82b5dc",
+              "env": [
+                {
+                  "name": "STATS_PASSWORD_FILE",
+                  "value": "/var/lib/haproxy/conf/metrics-auth/statsPassword"
+                }
+              ],
+              "volumeMounts": []
+            }
+          ]
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "name": "infra-gpu-01.ocp-edge-nw.mesa.internal",
+        "internal_ip": "192.168.50.21",
+        "mac": "0c:42:a1:7b:3e:10",
+        "kubelet": "v1.29.8",
+        "os": "RHCOS 416.94.202609151002-0",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "False",
+            "message": "Kubelet stopped posting node status"
+          }
+        ]
+      },
+      {
+        "name": "infra-gpu-02.ocp-edge-nw.mesa.internal",
+        "internal_ip": "10.21.60.12",
+        "mac": "0c:42:a1:7b:3e:2c",
+        "kubelet": "v1.29.8",
+        "os": "RHCOS 416.94.202609151002-0",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "message": "kubelet is posting ready status"
+          }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "event_id": "EV-91207",
+        "reason": "NodeNotReady",
+        "namespace": "default",
+        "count": 7,
+        "message": "Node infra-gpu-01.ocp-edge-nw.mesa.internal status is now: NodeNotReady (kubelet at 192.168.50.21 stopped posting)"
+      },
+      {
+        "event_id": "EV-91233",
+        "reason": "Failed",
+        "namespace": "nvidia-gpu-operator",
+        "count": 96,
+        "message": "Failed to pull image \"mirror.corp.example.net:5000/nvidia/driver@sha256:69f45e398081682e9e6f33313cf6e93c73104004b8d08b778393ff23d2eb0be4\": manifest unknown; fallback ghcr.io/nvidia/gpu-feature-discovery@sha256:c1ce3550ca3810b9925708dc0eefd6c621e443c6aa3e5840fe3fe00d291dc890 not permitted by policy"
+      }
+    ],
+    "log_excerpts": [
+      {
+        "source": "must-gather",
+        "line": "2026-09-16T11:02:10Z collected by CORP\\svc_gather for edge-oncall; machine ocp-edge-nw-7tq9c-gpu-0 provisioned, driver branch 550.90-lts"
+      },
+      {
+        "source": "NetworkManager",
+        "line": "2026-09-16T11:03:31Z bridge virbr0 192.168.122.1 up; uplink 192.168.50.21 on 0c:42:a1:7b:3e:10; gateway neighbour 0c:42:a1:00:1f:fe unreachable"
+      },
+      {
+        "source": "kubelet",
+        "line": "2026-09-16T11:04:02Z node infra-gpu-01 lost contact; workloads moved to infra-gpu-02, infra-gpu-05 cordoned"
+      },
+      {
+        "source": "machine-config-daemon",
+        "line": "2026-09-16T11:04:40Z I: writing file /etc/ignition/site.ign contents data:;base64,IyBzaXRlIGlnbml0aW9uIG92ZXJsYXkKc3RvcmFnZToKICBmaWxlczoKICAgIC0gcGF0aDogL2V0Yy9jaHJvbnkuZC9zaXRlLmNvbmYKICAgICAgY29udGVudHM6IGRhdGE6dGV4dC9wbGFpbjtiYXNlNjQsYzJWeWRtVnlJREV3TGpJeExqWXdMakV5SUdsaWRYSnpkQXB6WlhKMlpYSWdkR2x0WlM1amJHOTFaR1pzWVhKbExtTnZiU0JwWW5WeWMzUUsKICAgICAgbW9kZTogNDIwCg== mode 0600"
+      },
+      {
+        "source": "machine-config-daemon",
+        "line": "2026-09-16T11:04:41Z I: writing file /etc/systemd/system/gpu-tune.service contents data:text/plain;charset=utf-8;base64,W1VuaXRdCkRlc2NyaXB0aW9uPUdQVSB0dW5pbmcKQWZ0ZXI9bmV0d29yay1vbmxpbmUudGFyZ2V0CgpbU2VydmljZV0KRXhlY1N0YXJ0PS91c3IvbG9jYWwvYmluL2dwdS10dW5lCg== mode 0644"
+      },
+      {
+        "source": "machine-config-daemon",
+        "line": "2026-09-16T11:04:41Z I: writing file /usr/share/pixmaps/site-logo.png contents data:image/png;base64,iVBORw0KGgoAAAANSUhEUhhQd4syODOCxmbP+1B1C3vLHkztxR02QjgBXnQl+0aY//4ASUVORK5CYII= mode 0644"
+      },
+      {
+        "source": "nvidia-driver",
+        "line": "2026-09-16T11:05:12Z NGC auth failed with key nvapi-3Tq8ZrLw0PdK6sYv, stats auth read from /var/lib/haproxy/conf/metrics-auth/statsPassword; see https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/troubleshooting.html"
+      },
+      {
+        "source": "crio",
+        "line": "2026-09-16T11:05:40Z pulled docker.io/library/busybox@sha256:9d75f0d7c398df565d7ac04c6819b62d6d8f9560f5eb4672596ecd8f7e96ae91 for debug pod on infra-gpu-02"
+      },
+      {
+        "source": "vault-agent",
+        "line": "2026-09-16T11:05:58Z auth renewal failed, cached hvs.CAESIGq3Xv9Lm2Tk8RbW4nYp rejected by https://vault.mesa.internal:8200"
+      }
+    ]
+  }
+}

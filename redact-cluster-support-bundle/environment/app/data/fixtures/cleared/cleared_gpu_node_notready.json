@@ -1,0 +1,80 @@
+{
+  "items": [
+    {
+      "resource_id": "RES-20311",
+      "kind": "DaemonSet",
+      "namespace": "nvidia-gpu-operator",
+      "name": "nvidia-driver-[redacted-1]",
+      "condition": "CrashLoopBackOff",
+      "node": "[redacted-2]"
+    },
+    {
+      "resource_id": "RES-20340",
+      "kind": "Pod",
+      "namespace": "nvidia-gpu-operator",
+      "name": "gpu-feature-discovery-x2v9k",
+      "condition": "PodPending",
+      "node": "[redacted-3]"
+    },
+    {
+      "resource_id": "RES-20355",
+      "kind": "Deployment",
+      "namespace": "openshift-ingress",
+      "name": "router-default",
+      "condition": "NodeNotReady",
+      "node": "[redacted-2]"
+    }
+  ],
+  "events": [
+    {
+      "event_id": "EV-91207",
+      "reason": "NodeNotReady",
+      "namespace": "default",
+      "message": "Node [redacted-2] status is now: NodeNotReady (kubelet at [redacted-4] stopped posting)"
+    },
+    {
+      "event_id": "EV-91233",
+      "reason": "Failed",
+      "namespace": "nvidia-gpu-operator",
+      "message": "Failed to pull image \"[redacted-5]/nvidia/driver@sha256:69f45e398081682e9e6f33313cf6e93c73104004b8d08b778393ff23d2eb0be4\": manifest unknown; fallback ghcr.io/nvidia/gpu-feature-discovery@sha256:c1ce3550ca3810b9925708dc0eefd6c621e443c6aa3e5840fe3fe00d291dc890 not permitted by policy"
+    }
+  ],
+  "log_excerpts": [
+    {
+      "source": "must-gather",
+      "line": "2026-09-16T11:02:10Z collected by [redacted-6] for [redacted-7]; machine [redacted-8]-gpu-0 provisioned, driver branch 550.90-lts"
+    },
+    {
+      "source": "NetworkManager",
+      "line": "2026-09-16T11:03:31Z bridge virbr0 192.168.122.1 up; uplink [redacted-4] on [redacted-9]; gateway neighbour [redacted-10] unreachable"
+    },
+    {
+      "source": "kubelet",
+      "line": "2026-09-16T11:04:02Z node [redacted-1] lost contact; workloads moved to [redacted-11], [redacted-12] cordoned"
+    },
+    {
+      "source": "machine-config-daemon",
+      "line": "2026-09-16T11:04:40Z I: writing file /etc/ignition/site.ign contents data:;base64,IyBzaXRlIGlnbml0aW9uIG92ZXJsYXkKc3RvcmFnZToKICBmaWxlczoKICAgIC0gcGF0aDogL2V0Yy9jaHJvbnkuZC9zaXRlLmNvbmYKICAgICAgY29udGVudHM6IGRhdGE6dGV4dC9wbGFpbjtiYXNlNjQsYzJWeWRtVnlJRnR5WldSaFkzUmxaQzB4TTEwZ2FXSjFjbk4wQ25ObGNuWmxjaUIwYVcxbExtTnNiM1ZrWm14aGNtVXVZMjl0SUdsaWRYSnpkQW89CiAgICAgIG1vZGU6IDQyMAo= mode 0600"
+    },
+    {
+      "source": "machine-config-daemon",
+      "line": "2026-09-16T11:04:41Z I: writing file /etc/systemd/system/gpu-tune.service contents data:text/plain;charset=utf-8;base64,W1VuaXRdCkRlc2NyaXB0aW9uPUdQVSB0dW5pbmcKQWZ0ZXI9bmV0d29yay1vbmxpbmUudGFyZ2V0CgpbU2VydmljZV0KRXhlY1N0YXJ0PS91c3IvbG9jYWwvYmluL2dwdS10dW5lCg== mode 0644"
+    },
+    {
+      "source": "machine-config-daemon",
+      "line": "2026-09-16T11:04:41Z I: writing file /usr/share/pixmaps/site-logo.png contents data:image/png;base64,iVBORw0KGgoAAAANSUhEUhhQd4syODOCxmbP+1B1C3vLHkztxR02QjgBXnQl+0aY//4ASUVORK5CYII= mode 0644"
+    },
+    {
+      "source": "nvidia-driver",
+      "line": "2026-09-16T11:05:12Z NGC auth failed with key [redacted-14], stats auth read from /var/lib/haproxy/conf/metrics-auth/statsPassword; see https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/troubleshooting.html"
+    },
+    {
+      "source": "crio",
+      "line": "2026-09-16T11:05:40Z pulled docker.io/library/busybox@sha256:9d75f0d7c398df565d7ac04c6819b62d6d8f9560f5eb4672596ecd8f7e96ae91 for debug pod on [redacted-11]"
+    },
+    {
+      "source": "vault-agent",
+      "line": "2026-09-16T11:05:58Z auth renewal failed, cached [redacted-15] rejected by https://[redacted-16]:8200"
+    }
+  ]
+}

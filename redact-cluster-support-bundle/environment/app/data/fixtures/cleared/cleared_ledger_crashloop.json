@@ -1,0 +1,100 @@
+{
+  "items": [
+    {
+      "resource_id": "RES-00412",
+      "kind": "Deployment",
+      "namespace": "fin-ledger-prod",
+      "name": "ledger-api",
+      "condition": "CrashLoopBackOff",
+      "node": "[redacted-1]"
+    },
+    {
+      "resource_id": "RES-00559",
+      "kind": "Pod",
+      "namespace": "fin-ledger-prod",
+      "name": "ledger-api-7d9c4b8f5-2xkqp",
+      "condition": "CrashLoopBackOff",
+      "node": "[redacted-1]"
+    },
+    {
+      "resource_id": "RES-00501",
+      "kind": "StatefulSet",
+      "namespace": "observability",
+      "name": "otel-collector",
+      "condition": "FailedMount",
+      "node": "[redacted-2]"
+    }
+  ],
+  "events": [
+    {
+      "event_id": "EV-88413",
+      "reason": "FailedMount",
+      "namespace": "observability",
+      "message": "Unable to attach or mount volumes: mount failed: [redacted-3]:/exports/otel-spool on [redacted-2]"
+    },
+    {
+      "event_id": "EV-88420",
+      "reason": "BackOff",
+      "namespace": "fin-ledger-prod",
+      "message": "Back-off restarting failed container api in pod ledger-api-7d9c4b8f5-2xkqp_fin-ledger-prod(8f21c4ad-3b77-4e01-9c6e-1180a4f2ee55)"
+    }
+  ],
+  "log_excerpts": [
+    {
+      "source": "must-gather",
+      "line": "2026-09-13T02:36:40Z collection [redacted-4] started by [redacted-5] as [redacted-6] against https://[redacted-7]:6443 (cluster [redacted-8], infrastructure [redacted-9], version 4.16.12)"
+    },
+    {
+      "source": "cloud-init",
+      "line": "2026-09-13T02:35:11Z metadata service at 169.254.169.254:80 unreachable, falling back to config drive; time source 151.101.194.69:123"
+    },
+    {
+      "source": "sshd",
+      "line": "2026-09-13T02:37:02Z reverse mapping checking getaddrinfo for [redacted-2] [[redacted-10]] failed"
+    },
+    {
+      "source": "NetworkManager",
+      "line": "2026-09-13T02:37:40Z device ens192 ([redacted-11]) carrier lost; neighbour [redacted-12] still reachable"
+    },
+    {
+      "source": "machine-config-daemon",
+      "line": "2026-09-13T02:38:17Z I: writing file /etc/containers/registries.conf contents data:text/plain;charset=utf-8;base64,dW5xdWFsaWZpZWQtc2VhcmNoLXJlZ2lzdHJpZXMgPSBbInJlZ2lzdHJ5LnJlZGhhdC5pbyJdCgpbW3JlZ2lzdHJ5XV0KICBwcmVmaXggPSAicXVheS5pby9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCiAgbG9jYXRpb24gPSAicXVheS5pby9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCgogIFtbcmVnaXN0cnkubWlycm9yXV0KICAgIGxvY2F0aW9uID0gIltyZWRhY3RlZC0xM106ODQ0My9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCg== mode 0644"
+    },
+    {
+      "source": "machine-config-daemon",
+      "line": "2026-09-13T02:38:17Z I: writing file /etc/motd contents data:;base64,H4sIABnZxGgC/1NWyE3MS0xPTVFIqgQykzMy81J1k/Pz0jLTdfMLUosSS/KLuMJTc5Lzc1MVSvIVgjyc/YMVTAzN9CxNuABMMG57PQAAAA== mode 0644"
+    },
+    {
+      "source": "machine-config-daemon",
+      "line": "2026-09-13T02:39:55Z error: could not pull [redacted-13]:8443/fin/ledger-api@sha256:8515ea1ae7b59839daf0eaed11ef3bf0553fefb89670036a2b8b6e9272fcb8d4 : x509: certificate signed by unknown authority; registry.redhat.io/ubi9/ubi-minimal@sha256:c1d1a91e7cea0ce862320085061a8be28f3ec7621262ec20a1ff9f1bbf84c66b unaffected"
+    },
+    {
+      "source": "kubelet",
+      "line": "2026-09-13T02:40:02Z W eviction_manager.go:604 eviction manager: pod ledger-api-7d9c4b8f5-2xkqp failed to evict; matches upstream issue https://github.com/openshift/machine-config-operator/issues/4412 and errata RHBA-2026:4471"
+    },
+    {
+      "source": "kube-scheduler",
+      "line": "2026-09-13T02:40:30Z I: pod ledger-api-7d9c4b8f5-2xkqp unschedulable on [redacted-14]; preempting toward [redacted-15] (0/2 nodes available)"
+    },
+    {
+      "source": "ledger-api",
+      "line": "2026-09-13T02:41:08Z FATAL db: password authentication failed for user ledger (tried [redacted-16]) at [redacted-17]:5432; log level debug, region us-east-fin-2, key file /etc/pki/tls/private/ledger.key"
+    },
+    {
+      "source": "ledger-api",
+      "line": "2026-09-13T02:41:09Z ERROR startup: failed to reach https://[redacted-18]:8200/v1/secret/data/fin/ledger (status 403, token [redacted-19]) from pod [redacted-20]; retried with Authorization: Bearer [redacted-21]"
+    },
+    {
+      "source": "coredns",
+      "line": "2026-09-13T02:41:12Z [INFO] [redacted-20]:53144 - 4411 \"PTR IN [redacted-20].in-addr.arpa. udp 44 false 512\" NXDOMAIN qr,aa,rd 128 0.000121s"
+    },
+    {
+      "source": "coredns",
+      "line": "2026-09-13T02:41:13Z [INFO] [redacted-20]:40981 - 7730 \"PTR IN 69.194.101.151.in-addr.arpa. udp 45 false 512\" NOERROR qr,rd,ra 112 0.018204s"
+    },
+    {
+      "source": "metallb-controller",
+      "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned [redacted-22]-[redacted-23]; next free [redacted-24]"
+    }
+  ]
+}

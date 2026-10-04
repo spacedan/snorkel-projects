@@ -23,7 +23,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SERVICE = "sluice-intake"
-VERSION = "4.0.0"
+VERSION = "5.0.0"
 
 CLUSTER_RANGES = [
     ipaddress.ip_network("10.21.0.0/16"),
@@ -33,11 +33,13 @@ CLUSTER_RANGES = [
     ipaddress.ip_network("127.0.0.0/8"),
 ]
 CLUSTER_DNS_SUFFIXES = [".mesa.internal", ".svc.cluster.local", ".cluster.local"]
+SECRET_ENV_HINTS = ["PASS", "SECRET", "TOKEN", "CRED", "AUTH", "KEY"]
 
-SALT = b"sluice-intake-redaction-v4"
+SALT = b"sluice-intake-redaction-v5"
 
 _SUF = "|".join(re.escape(s) for s in CLUSTER_DNS_SUFFIXES)
-RE_INTERNAL_HOST = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9._-]*(?:%s)\b" % _SUF)
+# DNS names compare case-insensitively, so the match and the placeholder key do too.
+RE_INTERNAL_HOST = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9._-]*(?:%s)\b" % _SUF, re.IGNORECASE)
 # A dotted quad that is not part of a longer dotted number, optionally written
 # as a reverse-DNS name. One pattern, so the octets of a reverse-DNS name are
 # never re-read as a forward address.
@@ -49,7 +51,7 @@ RE_SERVICE_ACCOUNT = re.compile(r"\bsystem:serviceaccount:[A-Za-z0-9._-]+:[A-Za-
 RE_BEARER = re.compile(r"\b(Bearer\s+)(\S+)")
 RE_VAULT = re.compile(r"\bhvs\.[A-Za-z0-9_.\-]+")
 RE_B64 = re.compile(r"\beyJ[A-Za-z0-9+/=_-]+")
-SECRET_ENV_HINT = re.compile(r"PASS|SECRET|TOKEN|CRED|AUTH|KEY", re.IGNORECASE)
+SECRET_ENV_HINT = re.compile("|".join(re.escape(h) for h in SECRET_ENV_HINTS), re.IGNORECASE)
 # File contents carried as a data URL: the header, then the base64 payload.
 RE_DATA_URL = re.compile(r"(data:[^,\s\"']*;base64,)([A-Za-z0-9+/]+={0,2})")
 GZIP_MAGIC = b"\x1f\x8b"
@@ -164,7 +166,7 @@ class Redactor:
     def _plain(self, value):
         if not value:
             return value
-        value = RE_INTERNAL_HOST.sub(lambda m: self.token(m.group(0)), value)
+        value = RE_INTERNAL_HOST.sub(lambda m: self.token(m.group(0).lower()), value)
         for literal in self.literals:
             if literal in value:
                 value = value.replace(literal, self.token(literal))

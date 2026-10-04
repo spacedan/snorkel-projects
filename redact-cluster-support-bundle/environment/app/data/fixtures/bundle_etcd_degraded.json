@@ -28,26 +28,16 @@
           "containers": [
             {
               "name": "etcd",
-              "image": "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:1d5f0ba4c7e28a91607bd3f4a2e8c15093746bafe0d21c85937fe4a06b8c1d33",
+              "image": "quay.io/openshift-release-dev/ocp-release@sha256:34d634a0c5483692c78ecc3ab48eacb237a8fa36071b2b192b04fc155c48b37d",
               "env": [
                 {
-                  "name": "ETCD_INITIAL_CLUSTER",
-                  "value": "master-00=https://10.44.2.10:2380,master-01=https://10.44.2.11:2380,master-02=https://10.44.2.12:2380"
-                },
-                {
-                  "name": "ETCDCTL_CACERT",
-                  "value": "/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt"
+                  "name": "ETCD_PEER_KEY_FILE",
+                  "value": "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer.key"
                 }
               ],
-              "volumeMounts": [
-                {
-                  "name": "data-dir",
-                  "mountPath": "/var/lib/etcd"
-                }
-              ]
+              "volumeMounts": []
             }
-          ],
-          "imagePullSecrets": []
+          ]
         }
       },
       {
@@ -58,38 +48,25 @@
         "condition": "ImagePullBackOff",
         "node": "worker-01.ocp-dr-west.mesa.internal",
         "replicas": {
-          "desired": 9,
+          "desired": 3,
           "ready": 0
         },
         "spec": {
           "containers": [
             {
               "name": "node-agent",
-              "image": "registry-dr.mesa.internal:8443/mesa-backup/velero@sha256:88a2c0f4e91b7d3652ae4c08fb19d7a3451c96e0d284fb7a1c930e5b62f4d811",
+              "image": "registry-dr.mesa.internal:8443/mesa-backup/velero@sha256:86990cd7180b7c5fb3e269a2b9eda5a87a0efc7016e0b457e6dd80a4fc2f3c4c",
               "env": [
                 {
-                  "name": "AWS_SHARED_CREDENTIALS_FILE",
-                  "value": "/credentials/cloud"
+                  "name": "AWS_SECRET_ACCESS_KEY",
+                  "value": "qT7vN2xRb9LkYw4ZsE1mUc6HdA"
                 },
                 {
-                  "name": "REGISTRY_AUTH_FILE",
-                  "value": "/var/lib/kubelet/config.json"
-                },
-                {
-                  "name": "BACKUP_TARGET",
-                  "value": "s3://mesa-dr-backups/ocp-dr-west"
-                },
-                {
-                  "name": "MIRROR_PULL_SECRET",
-                  "value": "eyJhdXRocyI6eyJyZWdpc3RyeS1kci5tZXNhLmludGVybmFsOjg0NDMiOnsiYXV0aCI6ImJXVnpZVHBrY2pGMk16VjRlUT09In19fQ=="
+                  "name": "VELERO_SCRATCH_DIR",
+                  "value": "/scratch"
                 }
               ],
-              "volumeMounts": [
-                {
-                  "name": "creds",
-                  "mountPath": "/credentials"
-                }
-              ]
+              "volumeMounts": []
             }
           ],
           "imagePullSecrets": [
@@ -106,25 +83,16 @@
         "name": "kube-apiserver-master-02",
         "condition": "APIServerUnavailable",
         "node": "master-02.ocp-dr-west.mesa.internal",
-        "replicas": {
-          "desired": 1,
-          "ready": 0
-        },
+        "replicas": null,
         "spec": {
           "containers": [
             {
               "name": "kube-apiserver",
-              "image": "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:6c0e9d21fb4a83759e1c02ba5d478e3f0946ac18be7d5310f2a8cb46d7e09155",
-              "env": [
-                {
-                  "name": "POD_IP",
-                  "value": "10.44.2.12"
-                }
-              ],
+              "image": "quay.io/openshift-release-dev/ocp-release@sha256:34d634a0c5483692c78ecc3ab48eacb237a8fa36071b2b192b04fc155c48b37d",
+              "env": [],
               "volumeMounts": []
             }
-          ],
-          "imagePullSecrets": []
+          ]
         }
       }
     ],
@@ -178,7 +146,7 @@
         "reason": "Failed",
         "namespace": "mesa-backup",
         "count": 1204,
-        "message": "Failed to pull image \"registry-dr.mesa.internal:8443/mesa-backup/velero@sha256:88a2c0f4e91b7d3652ae4c08fb19d7a3451c96e0d284fb7a1c930e5b62f4d811\": unauthorized: authentication required"
+        "message": "Failed to pull image \"registry-dr.mesa.internal:8443/mesa-backup/velero@sha256:86990cd7180b7c5fb3e269a2b9eda5a87a0efc7016e0b457e6dd80a4fc2f3c4c\": unauthorized: authentication required"
       },
       {
         "event_id": "EV-90088",
@@ -190,24 +158,40 @@
     ],
     "log_excerpts": [
       {
-        "source": "etcd",
-        "line": "2026-09-14T06:12:44Z W | rafthttp: health check for peer 8e9f11a2c4d70b53 could not connect: dial tcp 10.44.2.12:2380: i/o timeout (prober \"ROUND_TRIPPER_SNAPSHOT\")"
+        "source": "machine-config-daemon",
+        "line": "2026-09-14T06:08:51Z I: writing file /etc/chrony.conf contents data:;base64,H4sIAPNbxmgC/13KSwrDMAwA0b1PIejacmNyIX+UROBIQXYDuX3TQjfdDbx5wJ4krVQhX3eWjYV8UVl49XqQpaHmDtUGEW2jhp9GGQeqrcD5ZX24TnaSwfTEecaIU/yDe/fVcKeekGWQSWq/pRovY+FGEM5koXEOZTOVK3zFvQGrkuDDoQAAAA== mode 0644"
       },
       {
-        "source": "cluster-version-operator",
-        "line": "2026-09-14T06:10:02Z I: Retrieving payload quay.io/openshift-release-dev/ocp-release@sha256:2fb9c31a0d7e485f16a3c98b0d41e75c9268aab3f1057d6ea8934bc7e02f1d68 mirrored to registry-dr.mesa.internal:8443/openshift-release-dev/ocp-release"
-      },
-      {
-        "source": "kube-apiserver",
-        "line": "2026-09-14T06:11:31Z E: authentication error for serviceaccount system:serviceaccount:mesa-backup:velero from 10.128.4.77 ; known issue RHSA-2026:5512, tracked at https://issues.redhat.com/browse/OCPBUGS-41220"
+        "source": "machine-config-daemon",
+        "line": "2026-09-14T06:08:53Z I: pull secret refreshed for sre-oncall: eyJhdXRocyI6eyJyZWdpc3RyeS1kci5tZXNhLmludGVybmFsOjg0NDMiOnsiYXV0aCI6ImJXVnpZUzF3ZFd4c09tUnlNWFl6TlhoeE9FeDNNZz09In19fQ=="
       },
       {
         "source": "ovnkube-node",
         "line": "2026-09-14T06:09:40Z I: node subnet 10.128.4.0/23 allocated from cluster network 10.128.0.0/14; service network 172.30.0.0/16; egress to 151.101.0.0/16 allowed"
       },
       {
-        "source": "machine-config-daemon",
-        "line": "2026-09-14T06:08:51Z I: writing file /etc/chrony.conf contents data:;base64,H4sIAPNbxmgC/13KSwrDMAwA0b1PIejacmNyIX+UROBIQXYDuX3TQjfdDbx5wJ4krVQhX3eWjYV8UVl49XqQpaHmDtUGEW2jhp9GGQeqrcD5ZX24TnaSwfTEecaIU/yDe/fVcKeekGWQSWq/pRovY+FGEM5koXEOZTOVK3zFvQGrkuDDoQAAAA== mode 0644"
+        "source": "cluster-version-operator",
+        "line": "2026-09-14T06:10:02Z I: Retrieving payload quay.io/openshift-release-dev/ocp-release@sha256:34d634a0c5483692c78ecc3ab48eacb237a8fa36071b2b192b04fc155c48b37d mirrored to registry-dr.mesa.internal:8443/openshift-release-dev/ocp-release"
+      },
+      {
+        "source": "velero",
+        "line": "2026-09-14T06:10:44Z E: backup location check failed: SignatureDoesNotMatch using secret key qT7vN2xRb9LkYw4ZsE1mUc6HdA; scratch dir /scratch ok"
+      },
+      {
+        "source": "kube-apiserver",
+        "line": "2026-09-14T06:11:31Z E: authentication error for serviceaccount system:serviceaccount:mesa-backup:velero from 10.128.4.77 ; known issue RHSA-2026:5512, tracked at https://issues.redhat.com/browse/OCPBUGS-41220"
+      },
+      {
+        "source": "etcd",
+        "line": "2026-09-14T06:12:40Z I | embed: serving client requests on 127.0.0.1:2379 and 10.44.2.12:2379 using /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer.key"
+      },
+      {
+        "source": "etcd",
+        "line": "2026-09-14T06:12:44Z W | rafthttp: health check for peer 8e9f11a2c4d70b53 could not connect: dial tcp 10.44.2.12:2380: i/o timeout (prober \"ROUND_TRIPPER_SNAPSHOT\")"
+      },
+      {
+        "source": "kubelet",
+        "line": "2026-09-14T06:13:02Z I: lease for worker-02 renewed through master-02; standby master-05 (9a:04:11:cc:7e:5b) has not registered"
       }
     ]
   }

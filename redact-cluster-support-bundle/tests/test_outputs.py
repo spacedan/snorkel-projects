@@ -1,5 +1,12 @@
 """Verifier for redact-cluster-support-bundle.
 
+The agent is given three sample bundles with the summaries the release desk
+cleared for them, plus the estate's ranges, suffixes and env-var hints in the
+service config. Every behaviour asserted here is shown at least once in those
+cleared summaries; what is held out is the data and the combinations (an
+address form applied to a node address outside the ranges, a payload nested
+under a gzipped one, a hyphenated node family, and so on).
+
 Every graded bundle is generated at grade time. Nothing is replayed from the
 sample bundles shipped in the agent image: cluster names, node families,
 addresses and the forms they are written in, credentials, encoded file
@@ -39,6 +46,7 @@ SUFFIXES = [".mesa.internal", ".svc.cluster.local", ".cluster.local"]
 UPSTREAM = ["quay.io", "registry.redhat.io", "ghcr.io", "docker.io"]
 CLUSTER_PREFIXES = ["10.21", "10.44", "10.128", "172.30", "127"]
 PUBLIC_PREFIXES = ["151.101", "104.18", "23.215"]
+SECRET_ENV_NAMES = ["APP_SECRET", "DB_PASSWORD", "API_TOKEN", "SESSION_KEY", "REGISTRY_AUTH", "AWS_CREDENTIALS"]
 CONDITIONS = ["EtcdMembersDegraded", "APIServerUnavailable", "NodeNotReady", "CrashLoopBackOff",
               "FailedMount", "ImagePullBackOff", "PodPending"]
 
@@ -169,7 +177,7 @@ def _generate(seed, nonce=0):
     mirror = "%s.example.net:5000" % _w(rng, 7)
     collected_by = "%s\\%s.%s" % (domain.upper(), _w(rng, 2), _w(rng, 6))
     submitted_by = "%s-ops" % _w(rng, 6)
-    bundle_id = "SB-%s" % _alnum(rng, 8)
+    bundle_id = "SB-2026%02d%02d-%04d" % (rng.randrange(1, 13), rng.randrange(1, 29), rng.randrange(1, 9999))
     service_account = "system:serviceaccount:%s:%s" % (_w(rng, 6), _w(rng, 6))
 
     node_names, node_ips, node_macs, nodes = [], [], [], []
@@ -199,6 +207,7 @@ def _generate(seed, nonce=0):
     namespaces = [_w(rng, 7) for _ in range(3)]
     reasons = ["%s%s" % (_w(rng, 4).capitalize(), _w(rng, 5).capitalize()) for _ in range(3)]
     key_path = "/etc/%s/%s.pem" % (_w(rng, 5), _w(rng, 6))
+    region = "zone-%s" % _w(rng, 6)
     resources = []
     for index in range(rng.randrange(4, 8)):
         short, fqdn = node_names[index % len(node_names)]
@@ -218,8 +227,10 @@ def _generate(seed, nonce=0):
                             "image": "%s/%s/%s@sha256:%s"
                             % (UPSTREAM[index % len(UPSTREAM)], _w(rng, 5), _w(rng, 6), _hex(rng, 64)),
                             "env": [
-                                {"name": "APP_SECRET", "value": _alnum(rng, 18)},
+                                {"name": SECRET_ENV_NAMES[(seed + index) % len(SECRET_ENV_NAMES)],
+                                 "value": _alnum(rng, 18)},
                                 {"name": "TLS_KEY_FILE", "value": key_path},
+                                {"name": "REGION_LABEL", "value": region},
                             ],
                         }
                     ]
@@ -228,9 +239,13 @@ def _generate(seed, nonce=0):
         )
 
     env_secret = resources[0]["spec"]["containers"][0]["env"][0]["value"]
+    env_secret_2 = resources[1]["spec"]["containers"][0]["env"][0]["value"]
     bearer = _alnum(rng, 22)
     vault = "hvs.%s" % _alnum(rng, 20)
-    b64 = "eyJ%s==" % _alnum(rng, 40)
+    b64 = b64enc(json.dumps(
+        {"auths": {"%s.example.org" % _w(rng, 6): {"auth": b64enc(("%s:%s" % (_w(rng, 5), _alnum(rng, 12))).encode())}}},
+        separators=(",", ":")).encode())
+    assert b64.startswith("eyJ")
     svc_host = "%s.%s%s" % (_w(rng, 7), namespaces[0], suffix)
     plain_internal = "%s.mesa.internal" % _w(rng, 8)
     version = "4.%d.%d" % (rng.randrange(10, 20), rng.randrange(0, 20))
@@ -285,7 +300,10 @@ def _generate(seed, nonce=0):
         {"source": _w(rng, 6), "line": "bundle %s submitted by %s as %s collected by %s"
                                        % (bundle_id, submitted_by, service_account, collected_by)},
         {"source": _w(rng, 6), "line": "running %s version %s; see %s and %s" % (upstream_ref, version, errata, issue_url)},
-        {"source": _w(rng, 6), "line": "env secret %s on %s; key file %s" % (env_secret, node_ips[-1], key_path)},
+        {"source": _w(rng, 6), "line": "env secret %s on %s; key file %s; region %s"
+                                       % (env_secret, node_ips[-1], key_path, region)},
+        {"source": "sshd", "line": "reverse mapping checking getaddrinfo for %s failed" % node_names[1][1].upper()},
+        {"source": "cloud-init", "line": "metadata service at 169.254.169.254:80 unreachable; bridge virbr0 192.168.122.1 up"},
         {"source": "coredns", "line": "[INFO] %s:%d - %d \"PTR IN %s. udp 44 false 512\" NXDOMAIN"
                                       % (node_ips[1], rng.randrange(30000, 60000), rng.randrange(1000, 9999),
                                          reverse_name(ptr_addr))},
@@ -327,7 +345,8 @@ def _generate(seed, nonce=0):
         % (keep[2], _w(rng, 5), payload_host, payload_addr),
         gz=gz_a,
     )
-    inner = data_url("apiServer: %s\nnode: %s\nvip: %s\n# %s\n" % (api_url, unlisted, nested_addr, keep[3]),
+    inner = data_url("apiServer: %s\nnode: %s\nvip: %s\ntoken: %s\n# %s\n"
+                     % (api_url, unlisted, nested_addr, env_secret_2, keep[3]),
                      gz=gz_b if seed % 2 else None)
     ignition = data_url(
         "# %s\nstorage:\n  files:\n    - path: /etc/kubernetes/%s.conf\n      contents: %s\n      mode: 420\n"
@@ -373,6 +392,8 @@ def _generate(seed, nonce=0):
         "service dns host": svc_host,
         "internal host": plain_internal,
         "env secret": env_secret,
+        "env secret inside a nested payload": env_secret_2,
+        "node hostname in upper case": node_names[1][1].upper(),
         "bearer token": bearer,
         "vault token": vault,
         "base64 secret": b64,
@@ -411,6 +432,9 @@ def _generate(seed, nonce=0):
         "errata": errata,
         "issue url": issue_url,
         "absolute-path env value": key_path,
+        "value of an env var that is not a credential": region,
+        "link-local metadata address": "169.254.169.254:80",
+        "private address that is not the estate's": "virbr0 192.168.122.1 up",
         "public address in reverse-DNS form": reverse_name(public),
         "public address with a port": "%s:443" % public,
         "public address": "via %s:53" % public,
@@ -692,6 +716,23 @@ def test_same_value_maps_identically_in_different_fields(service):
     )
 
 
+def test_hostname_case_does_not_matter(service):
+    """DNS names are the same name in any case, so they share a placeholder."""
+    bundle, truth = generate(19)
+    fqdn = [v for k, v in truth["sensitive"].items() if k.startswith("node fqdn ")][0]
+    host = truth["sensitive"]["internal host"]
+    excerpts = bundle["evidence"]["log_excerpts"]
+    for key, value in (("fqdn", fqdn), ("host", host)):
+        excerpts.append({"source": "c-%s-lower" % key, "line": "peer %s ok" % value})
+        excerpts.append({"source": "c-%s-upper" % key, "line": "peer %s ok" % value.upper()})
+    case, _ = ok(service, bundle)
+    lines = probe_lines(case, "c-")
+    for key, value in (("fqdn", fqdn), ("host", host)):
+        lower, upper = lines["c-%s-lower" % key], lines["c-%s-upper" % key]
+        assert value not in lower and value.upper() not in upper, "%s was not replaced in both cases" % value
+        assert lower == upper, "%s in upper case became %r but %r in lower case" % (value, upper, lower)
+
+
 def placeholder_in(line, label):
     head, tail = "peer ", " ok"
     assert line.startswith(head) and line.endswith(tail), (
@@ -713,6 +754,7 @@ def test_address_forms_share_the_plain_placeholder(service, seed):
         "cluster address with a port": ("%s:6443" % port_addr, "{port}:6443"),
         "node address with a port": ("%s:10250" % node_addr, "{node}:10250"),
         "cluster address in reverse-DNS form": (reverse_name(ptr_addr), "{ptr}.in-addr.arpa"),
+        "reverse-DNS name with its trailing dot": (reverse_name(ptr_addr) + ".", "{ptr}.in-addr.arpa."),
         "node address in reverse-DNS form": (reverse_name(node_addr), "{node}.in-addr.arpa"),
         "network address of a range": ("%s/23" % subnet, "{subnet}/23"),
         "hyphenated range": ("%s-%s" % (lo, hi), "{lo}-{hi}"),
@@ -778,6 +820,10 @@ def test_payloads_are_sanitized_in_place(service, seed):
     inner_src = "ptr=%s\nkeep=%s\n" % (reverse_name(ptr_addr), words[2])
     inner_want = "ptr={ptr}.in-addr.arpa\nkeep=%s\n" % words[2]
     outer_src = "files:\n- contents: %s\n- keep: %s\n" % (url(inner_src), words[3])
+    # A clean, gzipped inner payload under an outer one that does need changing.
+    clean_inner = url("makestep 1.0 3\n# %s\n" % words[0], gz=1)
+    mixed_src = "server=%s\ncontents: %s\n" % (addr, clean_inner)
+    mixed_want = "server={addr}\ncontents: %s\n" % clean_inner
 
     excerpts = bundle["evidence"]["log_excerpts"]
     for key, value in plain.items():
@@ -785,6 +831,7 @@ def test_payloads_are_sanitized_in_place(service, seed):
     excerpts.append({"source": "e-text", "line": "wrote %s done" % url(text_src)})
     excerpts.append({"source": "e-gzip", "line": "wrote %s done" % url(gz_src, gz=6)})
     excerpts.append({"source": "e-nested", "line": "wrote %s done" % url(outer_src, gz=9)})
+    excerpts.append({"source": "e-mixed", "line": "wrote %s done" % url(mixed_src)})
     case, _ = ok(service, bundle)
     lines = probe_lines(case, "e-")
     tokens = {key: placeholder_in(lines["e-plain-%s" % key], "a plain value") for key in plain}
@@ -811,6 +858,11 @@ def test_payloads_are_sanitized_in_place(service, seed):
     if not outer_ok or inner_gz or inner != inner_want.format(**tokens):
         wrong["nested payload"] = "outer decodes to %r (gzip=%s); inner decodes to %r, want %r" % (
             outer, gzipped, inner, inner_want.format(**tokens))
+
+    got, gzipped = open_payload(payload_of(lines["e-mixed"], "a payload holding a clean payload"))
+    if gzipped or got != mixed_want.format(**tokens):
+        wrong["clean payload inside a changed one"] = "decodes to %r, want %r (inner payload byte for byte)" % (
+            got, mixed_want.format(**tokens))
 
     assert not wrong, "seed %d: data-URL payloads were not sanitized in place:\n%s" % (
         seed, "\n".join("  %s: %s" % pair for pair in wrong.items())

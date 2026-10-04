@@ -1,0 +1,80 @@
+{
+  "items": [
+    {
+      "resource_id": "RES-10044",
+      "kind": "ClusterOperator",
+      "namespace": "openshift-etcd",
+      "name": "etcd",
+      "condition": "EtcdMembersDegraded",
+      "node": "[redacted-1]"
+    },
+    {
+      "resource_id": "RES-10190",
+      "kind": "DaemonSet",
+      "namespace": "mesa-backup",
+      "name": "velero-node-agent",
+      "condition": "ImagePullBackOff",
+      "node": "[redacted-2]"
+    },
+    {
+      "resource_id": "RES-10233",
+      "kind": "Pod",
+      "namespace": "openshift-kube-apiserver",
+      "name": "kube-apiserver-[redacted-3]",
+      "condition": "APIServerUnavailable",
+      "node": "[redacted-1]"
+    }
+  ],
+  "events": [
+    {
+      "event_id": "EV-90021",
+      "reason": "Failed",
+      "namespace": "mesa-backup",
+      "message": "Failed to pull image \"[redacted-4]:8443/mesa-backup/velero@sha256:86990cd7180b7c5fb3e269a2b9eda5a87a0efc7016e0b457e6dd80a4fc2f3c4c\": unauthorized: authentication required"
+    },
+    {
+      "event_id": "EV-90088",
+      "reason": "Unhealthy",
+      "namespace": "openshift-etcd",
+      "message": "Readiness probe failed: Get \"https://[redacted-5]:2379/health\": dial tcp [redacted-5]:2379: connect: connection refused"
+    }
+  ],
+  "log_excerpts": [
+    {
+      "source": "machine-config-daemon",
+      "line": "2026-09-14T06:08:51Z I: writing file /etc/chrony.conf contents data:;base64,H4sIAAAAAAACA3XJOwpDIRAF0N5VDKRWIZBsJqTwM+qAceQ+8+DtPp8iXboD50SPMELlTPF4MzUZbJOOItXqZISlMFO109mhcXcfu7GmU1SS+MS2zMbYGXQD55AWZ3u5/63rrzKkrCKdye8Bvkv0qUHH4b9jXravDeabAAAA mode 0644"
+    },
+    {
+      "source": "machine-config-daemon",
+      "line": "2026-09-14T06:08:53Z I: pull secret refreshed for [redacted-7]: [redacted-8]"
+    },
+    {
+      "source": "ovnkube-node",
+      "line": "2026-09-14T06:09:40Z I: node subnet [redacted-9]/23 allocated from cluster network [redacted-10]/14; service network [redacted-11]/16; egress to 151.101.0.0/16 allowed"
+    },
+    {
+      "source": "cluster-version-operator",
+      "line": "2026-09-14T06:10:02Z I: Retrieving payload quay.io/openshift-release-dev/ocp-release@sha256:34d634a0c5483692c78ecc3ab48eacb237a8fa36071b2b192b04fc155c48b37d mirrored to [redacted-4]:8443/openshift-release-dev/ocp-release"
+    },
+    {
+      "source": "velero",
+      "line": "2026-09-14T06:10:44Z E: backup location check failed: SignatureDoesNotMatch using secret key [redacted-12]; scratch dir /scratch ok"
+    },
+    {
+      "source": "kube-apiserver",
+      "line": "2026-09-14T06:11:31Z E: authentication error for serviceaccount [redacted-13] from [redacted-14] ; known issue RHSA-2026:5512, tracked at https://issues.redhat.com/browse/OCPBUGS-41220"
+    },
+    {
+      "source": "etcd",
+      "line": "2026-09-14T06:12:40Z I | embed: serving client requests on [redacted-15]:2379 and [redacted-5]:2379 using /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer.key"
+    },
+    {
+      "source": "etcd",
+      "line": "2026-09-14T06:12:44Z W | rafthttp: health check for peer 8e9f11a2c4d70b53 could not connect: dial tcp [redacted-5]:2380: i/o timeout (prober \"ROUND_TRIPPER_SNAPSHOT\")"
+    },
+    {
+      "source": "kubelet",
+      "line": "2026-09-14T06:13:02Z I: lease for [redacted-16] renewed through [redacted-3]; standby [redacted-17] ([redacted-18]) has not registered"
+    }
+  ]
+}
