@@ -33,9 +33,14 @@ load-balancer pool range, and reversed inside a CoreDNS PTR query, where its oct
 look like an ordinary public address. Each of those has to be recognised as the same value and
 given the same placeholder, while public addresses in exactly the same forms have to survive.
 Token-splitting or naive dotted-quad matching misses most of these forms; redacting every address
-or every reverse name destroys the summary. The output also has to be reproducible across
-processes and key orders, which rules out the shipped placeholder helper built on hash().
-"""
+or every reverse name destroys the summary. The same identifiers also travel inside file contents
+that the machine-config daemon logs as data URLs: base64, often gzip underneath, and sometimes an
+ignition file that itself embeds another data URL. Nothing in such a line looks sensitive, so a
+sanitizer that only reads the text passes it through; the payload has to be decoded, sanitized
+with the same placeholders as the surrounding text, and re-encoded in the form it arrived in, while
+payloads that are clean or not text have to come back byte for byte. The output also has to be
+reproducible across processes and key orders, which rules out the shipped placeholder helper built
+on hash() and a re-compressed gzip stream that carries the current time in its header."""
 
 solution_explanation = """
 The oracle rewrites /app/sluice/intake_server.py to return only items, events and log_excerpts,
@@ -49,7 +54,12 @@ accounts, bearer tokens, Vault tokens and eyJ base64 strings. Addresses are hand
 pattern that matches a dotted quad not embedded in a longer dotted number, optionally followed by
 .in-addr.arpa; a reverse name is un-reversed before the range and node-address check, so its
 octets are never re-read as a forward address, and only the address itself is replaced, leaving
-ports, prefix lengths, range hyphens and the reverse suffix in place. Placeholders are salted
+ports, prefix lengths, range hyphens and the reverse suffix in place. Each string is first split
+around its data URLs: the text between them takes the plain rules, and each payload is base64
+decoded, gunzipped when it starts with the gzip magic number, and, if it is UTF-8 text, passed back
+through the same routine so nested data URLs are handled; a payload that changes is re-encoded with
+gzip at a fixed mtime when it arrived gzipped, and one that does not change, or is not text, is
+returned untouched. Placeholders are salted
 SHA-256 prefixes keyed on the canonical forward address or value, held in a per-response map with
 a collision guard, so they are identical across processes and one-to-one within a response.
 """
@@ -68,9 +78,15 @@ with a port, as a range and as a reverse name, and an absolute-path env value. P
 consistency and injectivity are checked with single-value probe lines compared whole, so no
 placeholder syntax is assumed. Address forms are checked by planting each address plainly and in
 its other forms inside fixed text, then requiring the form's line to equal the plain placeholder
-with the port, prefix length, hyphen or .in-addr.arpa still around it. Determinism is checked by
-repeat, reversed key order, a fresh process with a different hash seed, and a fresh process
-receiving the reordered bundle first. The service runs under -I -S in a private scratch directory
+with the port, prefix length, hyphen or .in-addr.arpa still around it. Data-URL payloads are
+planted as base64 text, gzipped text and a payload nested inside another; the leak check decodes
+every payload in the response, recursively, before searching it, and a separate test decodes each
+returned payload and requires it to equal the original text with only the sensitive values replaced
+by their plain-text placeholders, gzipped exactly when the original was. Clean gzipped, clean text
+and binary payloads must be returned byte for byte. Determinism is checked by repeat, reversed key
+order, a fresh process with a different hash seed, and a fresh process receiving the reordered
+bundle first, each pair of requests more than a second apart so that output depending on the clock
+shows up. The service runs under -I -S in a private scratch directory
 as an unprivileged account started with only --port.
 """
 
@@ -88,7 +104,7 @@ environment_mode = "separate"
 network_mode = "no-network"
  
 [agent]
-timeout_sec = 7200
+timeout_sec = 9000
 network_mode = "no-network"
  
 [environment]

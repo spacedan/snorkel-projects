@@ -211,6 +211,14 @@
       {
         "source": "metallb-controller",
         "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned 10.21.40.10-10.21.40.50; next free 10.21.40.23"
+      },
+      {
+        "source": "machine-config-daemon",
+        "line": "2026-09-13T02:38:17Z I: writing file /etc/containers/registries.conf contents data:text/plain;charset=utf-8;base64,dW5xdWFsaWZpZWQtc2VhcmNoLXJlZ2lzdHJpZXMgPSBbInJlZ2lzdHJ5LnJlZGhhdC5pbyJdCgpbW3JlZ2lzdHJ5XV0KICBwcmVmaXggPSAicXVheS5pby9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCiAgbG9jYXRpb24gPSAicXVheS5pby9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCgogIFtbcmVnaXN0cnkubWlycm9yXV0KICAgIGxvY2F0aW9uID0gInJlZ2lzdHJ5Lm1lc2EuaW50ZXJuYWw6ODQ0My9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCg== mode 0644"
+      },
+      {
+        "source": "machine-config-daemon",
+        "line": "2026-09-13T02:38:17Z I: writing file /etc/motd contents data:;base64,H4sIABnZxGgC/1NWyE3MS0xPTVFIqgQykzMy81J1k/Pz0jLTdfMLUosSS/KLuMJTc5Lzc1MVSvIVgjyc/YMVTAzN9CxNuABMMG57PQAAAA== mode 0644"
       }
     ]
   }

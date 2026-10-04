@@ -204,6 +204,10 @@
       {
         "source": "ovnkube-node",
         "line": "2026-09-14T06:09:40Z I: node subnet 10.128.4.0/23 allocated from cluster network 10.128.0.0/14; service network 172.30.0.0/16; egress to 151.101.0.0/16 allowed"
+      },
+      {
+        "source": "machine-config-daemon",
+        "line": "2026-09-14T06:08:51Z I: writing file /etc/chrony.conf contents data:;base64,H4sIAPNbxmgC/13KSwrDMAwA0b1PIejacmNyIX+UROBIQXYDuX3TQjfdDbx5wJ4krVQhX3eWjYV8UVl49XqQpaHmDtUGEW2jhp9GGQeqrcD5ZX24TnaSwfTEecaIU/yDe/fVcKeekGWQSWq/pRovY+FGEM5koXEOZTOVK3zFvQGrkuDDoQAAAA== mode 0644"
       }
     ]
   }
