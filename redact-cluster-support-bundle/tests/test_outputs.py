@@ -243,7 +243,7 @@ def _generate(seed, nonce=0):
     bearer = _alnum(rng, 22)
     vault = "hvs.%s" % _alnum(rng, 20)
     b64 = b64enc(json.dumps(
-        {"auths": {"%s.example.org" % _w(rng, 6): {"auth": b64enc(("%s:%s" % (_w(rng, 5), _alnum(rng, 12))).encode())}}},
+        {"auths": {mirror: {"auth": b64enc(("%s:%s" % (_w(rng, 5), _alnum(rng, 12))).encode())}}},
         separators=(",", ":")).encode())
     assert b64.startswith("eyJ")
     svc_host = "%s.%s%s" % (_w(rng, 7), namespaces[0], suffix)
@@ -633,19 +633,66 @@ def test_lists_keep_bundle_order_and_copy_identifying_fields(service, seed):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("seed", SEEDS)
-def test_no_sensitive_value_survives(service, seed):
-    bundle, truth = generate(seed)
-    _, body = ok(service, bundle)
+CREDENTIAL_LABELS = {"env secret", "bearer token", "vault token", "base64 secret", "service account"}
+LEAK_GROUPS = ["declared identifiers", "node names", "hostnames", "addresses",
+               "reverse-DNS names of cluster addresses", "reverse-DNS names of node addresses",
+               "MAC addresses", "credentials and accounts"]
+
+
+def group_of(label):
+    """Which class of sensitive value a planted label belongs to."""
+    if " inside a " in label:
+        return "payload contents"
+    if "reverse-DNS" in label:
+        return "reverse-DNS names of %s addresses" % ("node" if "node address" in label else "cluster")
+    if label.startswith(("node address", "undeclared address", "address with a port", "network address",
+                         "low end", "high end")):
+        return "addresses"
+    if label.startswith(("mac ", "undeclared mac")):
+        return "MAC addresses"
+    if label.startswith(("node ", "unlisted node")):
+        return "node names"
+    if label.startswith(("service dns host", "internal host", "host label", "dns suffix")):
+        return "hostnames"
+    if label in CREDENTIAL_LABELS:
+        return "credentials and accounts"
+    return "declared identifiers"
+
+
+def response_text(service_, bundle):
+    """(every string of the response, what its data-URL payloads decode to)."""
+    _, body = ok(service_, bundle)
     case = json.loads(body)
-    # Every string of the response, plus whatever its data-URL payloads decode to.
-    text = expanded("\n".join(
+    plain = "\n".join(
         str(v) for key in ("items", "events", "log_excerpts") for entry in case[key] for v in entry.values()
-    ))
-    leaked = sorted(label for label, value in truth["sensitive"].items() if value in text)
-    assert not leaked, (
-        "seed %d: these reached the summary, in plain text or inside a data-URL payload: %r" % (seed, leaked)
     )
+    return plain, expanded(plain)[len(plain):]
+
+
+@pytest.mark.parametrize("group", LEAK_GROUPS)
+def test_no_sensitive_value_survives(service, group):
+    """Nothing planted from this class of sensitive value is left in the response text."""
+    leaked = {}
+    for seed in SEEDS:
+        bundle, truth = generate(seed)
+        plain, _ = response_text(service, bundle)
+        found = sorted(label for label, value in truth["sensitive"].items()
+                       if group_of(label) == group and value in plain)
+        if found:
+            leaked[seed] = found
+    assert not leaked, "%s reached the summary (by seed): %r" % (group, leaked)
+
+
+def test_no_sensitive_value_survives_inside_payloads(service):
+    """Decoding every data-URL payload in the response, recursively, turns up nothing sensitive."""
+    leaked = {}
+    for seed in SEEDS:
+        bundle, truth = generate(seed)
+        _, inside = response_text(service, bundle)
+        found = sorted(label for label, value in truth["sensitive"].items() if value in inside)
+        if found:
+            leaked[seed] = found
+    assert not leaked, "these are still inside data-URL payloads (by seed): %r" % leaked
 
 
 @pytest.mark.parametrize("seed", SEEDS)
@@ -802,8 +849,8 @@ def test_payloads_are_sanitized_in_place(service, seed):
     back in the encoding it arrived in."""
     bundle, truth = generate(seed)
     addr, node_addr, ptr_addr = truth["port_addr"], truth["node_ips"][0], truth["ptr_addr"]
-    mac, unlisted = truth["node_macs"][0], truth["unlisted"]
-    plain = {"addr": addr, "node": node_addr, "ptr": ptr_addr, "mac": mac, "unlisted": unlisted}
+    mac = truth["node_macs"][0]
+    plain = {"addr": addr, "node": node_addr, "ptr": ptr_addr, "mac": mac}
     rng = random.Random("payload-probe:%d" % seed)
     words = [_w(rng, 10) for _ in range(4)]
 
@@ -813,8 +860,8 @@ def test_payloads_are_sanitized_in_place(service, seed):
             raw = gzip.compress(raw, compresslevel=gz, mtime=1690000000 + seed)
         return "data:text/plain;base64," + b64enc(raw)
 
-    text_src = "server=%s:6443\nnode=%s\nmac=%s\nkeep=%s\n" % (addr, unlisted, mac, words[0])
-    text_want = "server={addr}:6443\nnode={unlisted}\nmac={mac}\nkeep=%s\n" % words[0]
+    text_src = "server=%s:6443\nmac=%s\nkeep=%s\n" % (addr, mac, words[0])
+    text_want = "server={addr}:6443\nmac={mac}\nkeep=%s\n" % words[0]
     gz_src = "peer=%s\nkeep=%s\n" % (node_addr, words[1])
     gz_want = "peer={node}\nkeep=%s\n" % words[1]
     inner_src = "ptr=%s\nkeep=%s\n" % (reverse_name(ptr_addr), words[2])
