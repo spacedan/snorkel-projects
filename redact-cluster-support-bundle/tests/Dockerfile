@@ -5,7 +5,7 @@ FROM public.ecr.aws/docker/library/python:3.13-slim-bookworm@sha256:ed86c82274b3
 RUN pip install --no-cache-dir pytest==9.1.1 pytest-json-ctrf==0.5.2
 
 # The agent's service is executed as this unprivileged account so that the
-# submitted code cannot read the verifier's sealed fixtures or assertions.
+# submitted code cannot read the verifier's own test file.
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin sluicesvc \
  && mkdir -p /run/sluice \
  && chown sluicesvc:sluicesvc /run/sluice
