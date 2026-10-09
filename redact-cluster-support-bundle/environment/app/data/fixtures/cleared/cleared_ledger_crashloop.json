@@ -33,6 +33,12 @@
       "message": "Unable to attach or mount volumes: mount failed: [redacted-3]:/exports/otel-spool on [redacted-2]"
     },
     {
+      "event_id": "EV-88417",
+      "reason": "FailedCreatePodSandBox",
+      "namespace": "fin-ledger-prod",
+      "message": "Failed to create pod sandbox: rpc error: code = Unknown desc = failed to set up sandbox network:\n  plugin type=\"ovn-k8s-cni-overlay\" failed (add): no reply from [redacted-4]:9107 on [redacted-5]\n"
+    },
+    {
       "event_id": "EV-88420",
       "reason": "BackOff",
       "namespace": "fin-ledger-prod",
@@ -42,7 +48,7 @@
   "log_excerpts": [
     {
       "source": "must-gather",
-      "line": "2026-09-13T02:36:40Z collection [redacted-4] started by [redacted-5] as [redacted-6] against https://[redacted-7]:6443 (cluster [redacted-8], infrastructure [redacted-9], version 4.16.12)"
+      "line": "2026-09-13T02:36:40Z collection [redacted-6] started by [redacted-7] as [redacted-8] against [redacted-9] (cluster [redacted-10], infrastructure [redacted-11], version 4.16.12)"
     },
     {
       "source": "cloud-init",
@@ -50,15 +56,19 @@
     },
     {
       "source": "sshd",
-      "line": "2026-09-13T02:37:02Z reverse mapping checking getaddrinfo for [redacted-2] [[redacted-10]] failed"
+      "line": "2026-09-13T02:37:02Z reverse mapping checking getaddrinfo for [redacted-2] [[redacted-12]] failed"
     },
     {
       "source": "NetworkManager",
-      "line": "2026-09-13T02:37:40Z device ens192 ([redacted-11]) carrier lost; neighbour [redacted-12] still reachable"
+      "line": "2026-09-13T02:37:40Z device ens192 ([redacted-13]) carrier lost; neighbour [redacted-14] still reachable"
+    },
+    {
+      "source": "arping",
+      "line": "2026-09-13T02:37:44Z Unicast reply from [redacted-15] [[redacted-13]] 0.611ms"
     },
     {
       "source": "machine-config-daemon",
-      "line": "2026-09-13T02:38:17Z I: writing file /etc/containers/registries.conf contents data:text/plain;charset=utf-8;base64,dW5xdWFsaWZpZWQtc2VhcmNoLXJlZ2lzdHJpZXMgPSBbInJlZ2lzdHJ5LnJlZGhhdC5pbyJdCgpbW3JlZ2lzdHJ5XV0KICBwcmVmaXggPSAicXVheS5pby9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCiAgbG9jYXRpb24gPSAicXVheS5pby9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCgogIFtbcmVnaXN0cnkubWlycm9yXV0KICAgIGxvY2F0aW9uID0gIltyZWRhY3RlZC0xM106ODQ0My9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCg== mode 0644"
+      "line": "2026-09-13T02:38:17Z I: writing file /etc/containers/registries.conf contents data:text/plain;charset=utf-8;base64,dW5xdWFsaWZpZWQtc2VhcmNoLXJlZ2lzdHJpZXMgPSBbInJlZ2lzdHJ5LnJlZGhhdC5pbyJdCgpbW3JlZ2lzdHJ5XV0KICBwcmVmaXggPSAicXVheS5pby9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCiAgbG9jYXRpb24gPSAicXVheS5pby9vcGVuc2hpZnQtcmVsZWFzZS1kZXYiCgogIFtbcmVnaXN0cnkubWlycm9yXV0KICAgIGxvY2F0aW9uID0gIltyZWRhY3RlZC0xNl0vb3BlbnNoaWZ0LXJlbGVhc2UtZGV2Igo= mode 0644"
     },
     {
       "source": "machine-config-daemon",
@@ -66,7 +76,7 @@
     },
     {
       "source": "machine-config-daemon",
-      "line": "2026-09-13T02:39:55Z error: could not pull [redacted-13]:8443/fin/ledger-api@sha256:8515ea1ae7b59839daf0eaed11ef3bf0553fefb89670036a2b8b6e9272fcb8d4 : x509: certificate signed by unknown authority; registry.redhat.io/ubi9/ubi-minimal@sha256:c1d1a91e7cea0ce862320085061a8be28f3ec7621262ec20a1ff9f1bbf84c66b unaffected"
+      "line": "2026-09-13T02:39:55Z error: could not pull [redacted-16]/fin/ledger-api@sha256:8515ea1ae7b59839daf0eaed11ef3bf0553fefb89670036a2b8b6e9272fcb8d4 : x509: certificate signed by unknown authority; registry.redhat.io/ubi9/ubi-minimal@sha256:c1d1a91e7cea0ce862320085061a8be28f3ec7621262ec20a1ff9f1bbf84c66b unaffected"
     },
     {
       "source": "kubelet",
@@ -74,27 +84,35 @@
     },
     {
       "source": "kube-scheduler",
-      "line": "2026-09-13T02:40:30Z I: pod ledger-api-7d9c4b8f5-2xkqp unschedulable on [redacted-14]; preempting toward [redacted-15] (0/2 nodes available)"
+      "line": "2026-09-13T02:40:30Z I: pod ledger-api-7d9c4b8f5-2xkqp unschedulable on [redacted-5]; preempting toward [redacted-17] (0/2 nodes available)"
     },
     {
       "source": "ledger-api",
-      "line": "2026-09-13T02:41:08Z FATAL db: password authentication failed for user ledger (tried [redacted-16]) at [redacted-17]:5432; log level debug, region us-east-fin-2, key file /etc/pki/tls/private/ledger.key"
+      "line": "2026-09-13T02:41:08Z FATAL db: password authentication failed for user ledger (tried [redacted-18]) at [redacted-19]:5432; log level debug, region us-east-fin-2, key file /etc/pki/tls/private/ledger.key"
     },
     {
       "source": "ledger-api",
-      "line": "2026-09-13T02:41:09Z ERROR startup: failed to reach https://[redacted-18]:8200/v1/secret/data/fin/ledger (status 403, token [redacted-19]) from pod [redacted-20]; retried with Authorization: Bearer [redacted-21]"
+      "line": "2026-09-13T02:41:09Z ERROR startup: failed to reach https://[redacted-20]:8200/v1/secret/data/fin/ledger (status 403, token [redacted-21]) from pod [redacted-22]; retried with Authorization: Bearer [redacted-23]; giving up"
+    },
+    {
+      "source": "ledger-api",
+      "line": "    caused by: dial tcp [redacted-22]:5432: i/o timeout  "
     },
     {
       "source": "coredns",
-      "line": "2026-09-13T02:41:12Z [INFO] [redacted-20]:53144 - 4411 \"PTR IN [redacted-20].in-addr.arpa. udp 44 false 512\" NXDOMAIN qr,aa,rd 128 0.000121s"
+      "line": "2026-09-13T02:41:12Z [INFO] [redacted-22]:53144 - 4411 \"PTR IN [redacted-22].in-addr.arpa. udp 44 false 512\" NXDOMAIN qr,aa,rd 128 0.000121s"
     },
     {
       "source": "coredns",
-      "line": "2026-09-13T02:41:13Z [INFO] [redacted-20]:40981 - 7730 \"PTR IN 69.194.101.151.in-addr.arpa. udp 45 false 512\" NOERROR qr,rd,ra 112 0.018204s"
+      "line": "2026-09-13T02:41:13Z [INFO] [redacted-22]:40981 - 7730 \"PTR IN 69.194.101.151.in-addr.arpa. udp 45 false 512\" NOERROR qr,rd,ra 112 0.018204s"
+    },
+    {
+      "source": "coredns",
+      "line": "2026-09-13T02:41:14Z [INFO] [redacted-22]:38112 - 9120 \"A IN [redacted-24]. udp 78 false 512\" NXDOMAIN qr,aa,rd 171 0.000098s"
     },
     {
       "source": "metallb-controller",
-      "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned [redacted-22]-[redacted-23]; next free [redacted-24]"
+      "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned [redacted-25]-[redacted-26]; next free [redacted-27]"
     }
   ]
 }

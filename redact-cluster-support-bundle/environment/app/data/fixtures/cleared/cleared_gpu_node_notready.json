@@ -73,8 +73,12 @@
       "line": "2026-09-16T11:05:40Z pulled docker.io/library/busybox@sha256:9d75f0d7c398df565d7ac04c6819b62d6d8f9560f5eb4672596ecd8f7e96ae91 for debug pod on [redacted-11]"
     },
     {
+      "source": "kubelet",
+      "line": "2026-09-16T11:05:44Z E: image pull for nvidia-driver denied by mirror; credentials in use: [redacted-15] (from edge-mirror-creds)"
+    },
+    {
       "source": "vault-agent",
-      "line": "2026-09-16T11:05:58Z auth renewal failed, cached [redacted-15] rejected by https://[redacted-16]:8200"
+      "line": "2026-09-16T11:05:58Z auth renewal failed, cached [redacted-16]; Authorization: Bearer [redacted-16] rejected by https://[redacted-17]:8200"
     }
   ]
 }

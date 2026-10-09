@@ -64,22 +64,9 @@ def mask(value):
     return "REDACTED-%04x" % (hash(value) & 0xFFFF)
 
 
-def collect_resources(node, out):
-    """Walk a bundle and pull out every resource record."""
-    if isinstance(node, dict):
-        if "resource_id" in node:
-            out.append(node)
-        for value in node.values():
-            collect_resources(value, out)
-    elif isinstance(node, list):
-        for item in node:
-            collect_resources(item, out)
-    return out
-
-
 def build_case(bundle):
     evidence = bundle.get("evidence", {})
-    resources = collect_resources(evidence, [])
+    resources = evidence.get("resources", [])
     nodes = evidence.get("nodes", [])
     events = evidence.get("events", [])
     excerpts = evidence.get("log_excerpts", [])

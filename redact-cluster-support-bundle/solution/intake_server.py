@@ -15,7 +15,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SERVICE = "sluice-intake"
-VERSION = "5.0.0"
+VERSION = "6.0.0"
 
 CLUSTER_RANGES = [
     ipaddress.ip_network("10.21.0.0/16"),
@@ -27,26 +27,53 @@ CLUSTER_RANGES = [
 CLUSTER_DNS_SUFFIXES = [".mesa.internal", ".svc.cluster.local", ".cluster.local"]
 SECRET_ENV_HINTS = ["PASS", "SECRET", "TOKEN", "CRED", "AUTH", "KEY"]
 
-SALT = b"sluice-intake-redaction-v5"
+SALT = b"sluice-intake-redaction-v6"
 
 _SUF = "|".join(re.escape(s) for s in CLUSTER_DNS_SUFFIXES)
-# DNS names compare case-insensitively, so the match and the placeholder key do too.
-RE_INTERNAL_HOST = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9._-]*(?:%s)\b" % _SUF, re.IGNORECASE)
+_NAME = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
+# A whole hostname that ends in one of the suffixes: it must start at the start
+# of the name and the suffix must be its last labels, so a public name that
+# merely contains a suffix part-way through is left alone.
+RE_INTERNAL_HOST = re.compile(
+    r"(?<![A-Za-z0-9._-])[A-Za-z0-9][A-Za-z0-9._-]*(?:%s)(?![A-Za-z0-9_-]|\.[A-Za-z0-9])" % _SUF,
+    re.IGNORECASE,
+)
 # A dotted quad that is not part of a longer dotted number, optionally written
 # as a reverse-DNS name. One pattern, so the octets of a reverse-DNS name are
 # never re-read as a forward address.
 RE_ADDRESS = re.compile(
     r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(\.in-addr\.arpa\b)?(?!\d|\.\d)", re.IGNORECASE
 )
-RE_MAC = re.compile(r"\b(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b")
-RE_SERVICE_ACCOUNT = re.compile(r"\bsystem:serviceaccount:[A-Za-z0-9._-]+:[A-Za-z0-9._-]+")
-RE_BEARER = re.compile(r"\b(Bearer\s+)(\S+)")
-RE_VAULT = re.compile(r"\bhvs\.[A-Za-z0-9_.\-]+")
-RE_B64 = re.compile(r"\beyJ[A-Za-z0-9+/=_-]+")
+RE_MAC = re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:])")
+RE_SERVICE_ACCOUNT = re.compile(r"\bsystem:serviceaccount:%s:%s" % (_NAME, _NAME))
+# Token characters only, with dots allowed between runs, so punctuation that
+# follows a credential stays where it was.
+_TOKEN = r"[A-Za-z0-9_~+/=-]+(?:\.[A-Za-z0-9_~+/=-]+)*"
+RE_BEARER = re.compile(r"\bBearer\s+(%s)" % _TOKEN)
+RE_VAULT = re.compile(r"\bhvs\.%s" % _NAME)
+RE_B64 = re.compile(r"(?<![A-Za-z0-9+/_=-])eyJ[A-Za-z0-9+/_-]+(?:\.[A-Za-z0-9+/_-]+)*={0,2}")
 SECRET_ENV_HINT = re.compile("|".join(re.escape(h) for h in SECRET_ENV_HINTS), re.IGNORECASE)
 # File contents carried as a data URL: the header, then the base64 payload.
 RE_DATA_URL = re.compile(r"(data:[^,\s\"']*;base64,)([A-Za-z0-9+/]+={0,2})")
 GZIP_MAGIC = b"\x1f\x8b"
+
+PLACEHOLDER_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+PLACEHOLDER_WRAPPERS = [("[", "]"), ("<", ">"), ("{", "}"), ("(", ")"), ("|", "|"), ("#", "#"), ("~", "~")]
+
+
+def canonical(value):
+    """One key per value however it is written: hostnames and MACs ignore case."""
+    if RE_MAC.fullmatch(value) or RE_INTERNAL_HOST.fullmatch(value):
+        return value.lower()
+    return value
+
+
+def is_ipv4(text):
+    try:
+        ipaddress.IPv4Address(text)
+    except ValueError:
+        return False
+    return True
 
 
 class Redactor:
@@ -69,10 +96,12 @@ class Redactor:
         prefixes = set()
         for node in evidence.get("nodes") or []:
             name, mac, ip = node.get("name"), node.get("mac"), node.get("internal_ip")
-            if isinstance(ip, str) and ip:
-                # Addresses go through the address pass only, so every written
+            if isinstance(ip, str) and is_ipv4(ip):
+                # Addresses go through the address rule only, so every written
                 # form of a node address resolves to one placeholder.
                 self.node_ips.add(ip)
+            else:
+                literals.append(ip)
             literals.append(mac)
             if isinstance(name, str) and name:
                 short = name.split(".")[0]
@@ -83,41 +112,45 @@ class Redactor:
             for container in (res.get("spec") or {}).get("containers") or []:
                 for var in container.get("env") or []:
                     key, value = var.get("name"), var.get("value")
-                    if not isinstance(key, str) or not isinstance(value, str) or not value:
+                    if not isinstance(key, str) or not isinstance(value, str):
                         continue
                     if SECRET_ENV_HINT.search(key) and not value.startswith("/"):
                         literals.append(value)
 
-        self.literals = sorted({v for v in literals if isinstance(v, str) and v}, key=len, reverse=True)
+        self.literals = sorted({v for v in literals if isinstance(v, str) and v.strip()})
         self.families = [re.compile(r"\b%s-\d+\b" % re.escape(p)) for p in sorted(prefixes) if p]
 
-    def token(self, value):
-        """Salted digest placeholder: stable across processes, one-to-one per response."""
-        if value in self.tokens:
-            return self.tokens[value]
-        digest = hashlib.sha256(SALT + value.encode("utf-8")).hexdigest()[:16].upper()
-        candidate = "REDACTED-%s" % digest
-        suffix = 1
-        while candidate in self.used:
-            suffix += 1
-            candidate = "REDACTED-%s-%d" % (digest, suffix)
+    def token(self, key):
+        """Placeholder for one canonical value: stable across processes, never
+        containing the value it stands for, and one-to-one within a response."""
+        if key in self.tokens:
+            return self.tokens[key]
+        folded = key.upper()
+        letters = [c for c in PLACEHOLDER_ALPHABET if c not in folded]
+        if len(letters) < 2:
+            letters = list(PLACEHOLDER_ALPHABET)
+        opener, closer = next(((a, b) for a, b in PLACEHOLDER_WRAPPERS if a not in key and b not in key), ("", ""))
+        attempt = 0
+        while True:
+            digest = hashlib.sha256(SALT + attempt.to_bytes(4, "big") + key.encode("utf-8")).digest()
+            number = int.from_bytes(digest[:12], "big")
+            body = []
+            for _ in range(16):
+                number, index = divmod(number, len(letters))
+                body.append(letters[index])
+            candidate = opener + "".join(body) + closer
+            if candidate not in self.used and folded not in candidate.upper():
+                break
+            attempt += 1
         self.used.add(candidate)
-        self.tokens[value] = candidate
+        self.tokens[key] = candidate
         return candidate
 
     def sensitive_address(self, text):
-        try:
-            ip = ipaddress.IPv4Address(text)
-        except ValueError:
+        if not is_ipv4(text):
             return False
+        ip = ipaddress.IPv4Address(text)
         return text in self.node_ips or any(ip in net for net in CLUSTER_RANGES)
-
-    def _address(self, match):
-        quad, ptr = match.group(1), match.group(2)
-        address = ".".join(reversed(quad.split("."))) if ptr else quad
-        if not self.sensitive_address(address):
-            return match.group(0)
-        return self.token(address) + (ptr or "")
 
     def text(self, value):
         """Sanitize a string, descending into any data-URL payloads it carries."""
@@ -155,22 +188,53 @@ class Redactor:
             data = gzip.compress(data, mtime=0)
         return base64.b64encode(data).decode("ascii")
 
-    def _plain(self, value):
-        if not value:
-            return value
-        value = RE_INTERNAL_HOST.sub(lambda m: self.token(m.group(0).lower()), value)
+    def _spans(self, text):
+        """Every candidate replacement in the original text: (start, end, rank, key)."""
+        for match in RE_INTERNAL_HOST.finditer(text):
+            yield match.start(), match.end(), 0, match.group(0).lower()
         for literal in self.literals:
-            if literal in value:
-                value = value.replace(literal, self.token(literal))
+            start = text.find(literal)
+            while start != -1:
+                yield start, start + len(literal), 1, canonical(literal)
+                start = text.find(literal, start + 1)
         for pattern in self.families:
-            value = pattern.sub(lambda m: self.token(m.group(0)), value)
-        value = RE_MAC.sub(lambda m: self.token(m.group(0)), value)
-        value = RE_ADDRESS.sub(self._address, value)
-        value = RE_VAULT.sub(lambda m: self.token(m.group(0)), value)
-        value = RE_B64.sub(lambda m: self.token(m.group(0)), value)
-        value = RE_BEARER.sub(lambda m: m.group(1) + self.token(m.group(2)), value)
-        value = RE_SERVICE_ACCOUNT.sub(lambda m: self.token(m.group(0)), value)
-        return value
+            for match in pattern.finditer(text):
+                yield match.start(), match.end(), 2, match.group(0)
+        for match in RE_MAC.finditer(text):
+            yield match.start(), match.end(), 3, match.group(0).lower()
+        for match in RE_ADDRESS.finditer(text):
+            quad, reverse = match.group(1), match.group(2)
+            address = ".".join(reversed(quad.split("."))) if reverse else quad
+            if self.sensitive_address(address):
+                # Only the address is replaced: a port, prefix length, range
+                # hyphen or .in-addr.arpa around it stays.
+                yield match.start(1), match.end(1), 4, address
+        for match in RE_VAULT.finditer(text):
+            yield match.start(), match.end(), 5, match.group(0)
+        for match in RE_B64.finditer(text):
+            yield match.start(), match.end(), 6, match.group(0)
+        for match in RE_BEARER.finditer(text):
+            yield match.start(1), match.end(1), 7, match.group(1)
+        for match in RE_SERVICE_ACCOUNT.finditer(text):
+            yield match.start(), match.end(), 8, match.group(0)
+
+    def _plain(self, text):
+        """Replace sensitive values in one pass over the original text.
+
+        All candidates are found before anything is replaced, so a placeholder
+        is never scanned again, and overlaps resolve the same way in every
+        process: leftmost first, then longest, then rule order."""
+        if not text:
+            return text
+        out, cursor = [], 0
+        for start, end, _, key in sorted(self._spans(text), key=lambda s: (s[0], -(s[1] - s[0]), s[2], s[3])):
+            if start < cursor:
+                continue
+            out.append(text[cursor:start])
+            out.append(self.token(key))
+            cursor = end
+        out.append(text[cursor:])
+        return "".join(out)
 
 
 def build_case(bundle):

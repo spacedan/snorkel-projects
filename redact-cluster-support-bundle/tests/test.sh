@@ -13,8 +13,10 @@ if [ "$PWD" = "/" ]; then
     exit 0
 fi
 
-# pytest and pytest-json-ctrf are pre-installed in the verifier image.
-python -m pytest --ctrf /logs/verifier/ctrf.json /tests/test_outputs.py -rA
+# pytest and pytest-json-ctrf are pre-installed in the verifier image, in a
+# root-only directory that only this process is pointed at.
+PYTHONPATH=/opt/verifier PYTHONDONTWRITEBYTECODE=1 \
+    python -m pytest -p no:cacheprovider --ctrf /logs/verifier/ctrf.json /tests/test_outputs.py -rA
 rc=$?
 
 if [ "$rc" -eq 0 ]; then

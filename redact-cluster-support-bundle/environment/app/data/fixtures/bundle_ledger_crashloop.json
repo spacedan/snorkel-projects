@@ -98,7 +98,12 @@
               ],
               "volumeMounts": []
             }
-          ]
+          ],
+          "owner": {
+            "resource_id": "RES-00412",
+            "kind": "Deployment",
+            "name": "ledger-api"
+          }
         }
       },
       {
@@ -163,6 +168,13 @@
         "message": "Unable to attach or mount volumes: mount failed: nfs-prod-01.mesa.internal:/exports/otel-spool on worker-07.ocp-prod-east.mesa.internal"
       },
       {
+        "event_id": "EV-88417",
+        "reason": "FailedCreatePodSandBox",
+        "namespace": "fin-ledger-prod",
+        "count": 3,
+        "message": "Failed to create pod sandbox: rpc error: code = Unknown desc = failed to set up sandbox network:\n  plugin type=\"ovn-k8s-cni-overlay\" failed (add): no reply from 10.128.7.1:9107 on worker-04\n"
+      },
+      {
         "event_id": "EV-88420",
         "reason": "BackOff",
         "namespace": "fin-ledger-prod",
@@ -186,6 +198,10 @@
       {
         "source": "NetworkManager",
         "line": "2026-09-13T02:37:40Z device ens192 (3c:ec:ef:20:5d:91) carrier lost; neighbour 52:54:00:ab:9e:1f still reachable"
+      },
+      {
+        "source": "arping",
+        "line": "2026-09-13T02:37:44Z Unicast reply from 10.21.34.14 [3C:EC:EF:20:5D:91] 0.611ms"
       },
       {
         "source": "machine-config-daemon",
@@ -213,7 +229,11 @@
       },
       {
         "source": "ledger-api",
-        "line": "2026-09-13T02:41:09Z ERROR startup: failed to reach https://vault.mesa.internal:8200/v1/secret/data/fin/ledger (status 403, token hvs.CAESIJx9Qm2rT4kLp8WdN1zY) from pod 10.128.7.212; retried with Authorization: Bearer 8fK2mQx7Lr0vT1nZc5Wd3Ys"
+        "line": "2026-09-13T02:41:09Z ERROR startup: failed to reach https://vault.mesa.internal:8200/v1/secret/data/fin/ledger (status 403, token hvs.CAESIJx9Qm2rT4kLp8WdN1zY) from pod 10.128.7.212; retried with Authorization: Bearer 8fK2mQx7Lr0vT1nZc5Wd3Ys; giving up"
+      },
+      {
+        "source": "ledger-api",
+        "line": "    caused by: dial tcp 10.128.7.212:5432: i/o timeout  "
       },
       {
         "source": "coredns",
@@ -222,6 +242,10 @@
       {
         "source": "coredns",
         "line": "2026-09-13T02:41:13Z [INFO] 10.128.7.212:40981 - 7730 \"PTR IN 69.194.101.151.in-addr.arpa. udp 45 false 512\" NOERROR qr,rd,ra 112 0.018204s"
+      },
+      {
+        "source": "coredns",
+        "line": "2026-09-13T02:41:14Z [INFO] 10.128.7.212:38112 - 9120 \"A IN ledger-api-0.ledger-headless.fin-ledger-prod.pod.cluster.local. udp 78 false 512\" NXDOMAIN qr,aa,rd 171 0.000098s"
       },
       {
         "source": "metallb-controller",

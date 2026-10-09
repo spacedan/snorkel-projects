@@ -24,68 +24,92 @@ estate's ranges, DNS suffixes and env-var hints in the service config. It has to
 that evidence which strings identify the estate and which ones the vendor's engineers cannot work
 without, when both sit in the same log line. A mirrored image keeps its digest and loses its
 registry host; an upstream image is untouched. A node's address is replaced even when it sits
-outside every configured range, while a libvirt bridge address and the metadata address beside it
-stay. A sibling node the bundle never lists is replaced because it follows the node naming
-pattern. A container env value is replaced when its variable name marks a credential, unless the
-value is only a path. An address is the same address written plainly, with a port, as the network
-or either end of a range, or reversed inside a PTR query, and takes one placeholder in all of
-them; a hostname is the same hostname in upper case. File contents logged as data URLs have to be
-decoded, through gzip and through payloads nested inside payloads, cleaned with the same
-placeholders as the surrounding text and re-encoded as they arrived, while clean or binary
-payloads come back byte for byte. None of that is visible without diffing the samples against
-their cleared summaries and decoding what is inside them, and the held-out bundles combine the
-rules in ways the samples do not: an address form applied to a node address outside the ranges, a
-payload nested under a gzipped one, a credential inside a nested payload. The output must also be
-byte-identical across processes and key orders, which rules out the shipped hash()-based helper
-and a re-compressed gzip stream that carries the current time.
+outside every configured range, while a libvirt bridge address, the metadata address and private
+space that merely borders a configured range stay. A sibling node the bundle never lists is
+replaced because it follows the node naming pattern. A container env value is replaced when its
+variable name marks a credential, unless the value is only a path. A hostname is internal only
+when one of the suffixes ends it, and is the same hostname in upper case; a MAC is the same MAC in
+upper case. An address is the same address written plainly, with a port, as the network or either
+end of a range, or reversed inside a PTR query, and takes one placeholder in all of them. A token
+after "Bearer" ends where the token ends, and is the same token when it also appears on its own.
+File contents logged as data URLs have to be decoded, through gzip and through payloads nested
+inside payloads, cleaned with the same placeholders as the surrounding text and re-encoded as they
+arrived, while clean or binary payloads come back byte for byte. Everything around a replaced
+value, down to indentation and a trailing newline, has to come back untouched. None of that is
+visible without diffing the samples against their cleared summaries and decoding what is inside
+them, and the held-out bundles combine the rules in ways the samples do not: an address form
+applied to a node address outside the ranges, a payload nested under a gzipped one, a credential
+inside a nested payload. The output must also be byte-identical across processes and key orders,
+which rules out the shipped hash()-based helper, replacement passes whose result depends on set
+order, and a re-compressed gzip stream that carries the current time.
 """
 
 solution_explanation = """
-The oracle rewrites /app/sluice/intake_server.py to return only items, events and log_excerpts,
-one entry per bundle entry in bundle order, copying the identifying fields verbatim and passing
-name, node, message and line through a per-request redactor. The redactor builds an inventory of
-declared values from submitted_by, bundle_id, the cluster block, each node's name, short name and
-mac, and every env value whose variable name matches the configured hints unless the value is an
-absolute path. It applies that inventory plus pattern rules for hostnames under the configured
-suffixes (matched and keyed case-insensitively), node naming families derived by stripping the
-trailing number from node short names, MACs, service accounts, bearer tokens, Vault tokens and
-eyJ base64 blobs. Addresses are handled by one pattern that matches a dotted quad not embedded in
-a longer dotted number, optionally followed by .in-addr.arpa; a reverse name is un-reversed before
-the range and node-address check, and only the address itself is replaced, so ports, prefix
-lengths, range hyphens and the reverse suffix stay. Each string is first split around its data
-URLs: text between them takes the plain rules, and each payload is base64 decoded, gunzipped when
-it starts with the gzip magic number, and, if it is UTF-8 text, passed back through the same
-routine so nested payloads are handled; a payload that changes is re-encoded, with gzip at a fixed
-mtime when it arrived gzipped, and one that does not change or is not text is returned untouched.
-Placeholders are salted SHA-256 prefixes keyed on the canonical value, held in a per-response map
-with a collision guard, so they are identical across processes and one-to-one within a response.
+The oracle replaces /app/sluice/intake_server.py with a service that returns only items, events
+and log_excerpts, one entry per entry of evidence.resources, evidence.events and
+evidence.log_excerpts in bundle order, copying the identifying fields verbatim and passing name,
+node, message and line through one per-request redactor. The redactor first builds an inventory
+of declared values: submitted_by, bundle_id, the cluster block, each node's name, short name and
+mac, and every env value whose variable name contains a configured hint unless the value is an
+absolute path. Each string is then sanitized in a single pass over the original text. Every
+candidate span is collected first: hostnames that end in a configured suffix, the declared
+values, node-family names derived by stripping the trailing number from node short names, MACs,
+addresses, Vault tokens, eyJ base64 blobs, the token after "Bearer", and service-account names.
+Overlaps are resolved leftmost first, then longest, then by a fixed rule order, and the chosen
+spans are replaced together, so a placeholder is never scanned again and the result does not
+depend on dictionary or set order. Addresses use one pattern that matches a dotted quad not
+embedded in a longer dotted number, optionally followed by .in-addr.arpa; a reverse name is
+un-reversed before the range and node-address check, and only the quad is replaced, so ports,
+prefix lengths, range hyphens and the reverse suffix stay. Hostnames and MACs are keyed in lower
+case. Before the plain pass a string is split around its data URLs: each payload is base64
+decoded, gunzipped when it starts with the gzip magic number, and, if it is UTF-8 text, passed
+back through the same routine so nested payloads are handled; a payload that changes is
+re-encoded, with gzip at a fixed mtime when it arrived gzipped, and one that does not change or is
+not text is returned untouched. A placeholder is a salted SHA-256 of the canonical value drawn
+from an alphabet that excludes the value's own characters, held in a per-response map and
+re-drawn on collision, so it is identical across processes, never contains its value and is
+one-to-one within a response. solve.sh installs that file and runs a smoke check over the samples.
 """
 
 verification_explanation = """
 Every behaviour the verifier asserts is shown at least once in the cleared summaries shipped with
-the task or fixed by the service config; what is held out is the data and the combinations. The
-verifier generates every graded bundle at grade time: cluster names, node naming families (some
-hyphenated), node addresses including one outside every configured range, MACs, accounts,
-credentials under varied env-var names, hostnames, resource ids, reasons, namespaces, registries,
-digests, versions, errata, public addresses and data-URL payloads are all fresh, and each
-sensitive class is planted where no other rule would incidentally catch it. Nothing is replayed
-from the samples. The generator records what it planted. Assertions check that the response has
-exactly the three lists with exactly the fields of the cleared summaries, in bundle order with
-identifying fields unchanged; that no planted sensitive value appears anywhere, including inside
-any payload the response carries, which the verifier decodes recursively; and that every planted
-non-sensitive value survives, including public, link-local and non-estate private addresses,
-path-valued and non-credential env values, and clean gzipped, clean text and binary payloads byte
-for byte. Placeholder consistency and injectivity are checked with single-value probe lines
-compared whole, so no placeholder syntax is assumed; the same probes check that a hostname in
-upper case, and an address with a port, as a range, or as a reverse name with or without its
-trailing dot, take the placeholder of the plain value with the surrounding text intact. Payload
-probes decode each returned payload and require it to equal the original text with only the
-sensitive values replaced by their plain-text placeholders, gzipped exactly when the original
-was, including a payload nested in a gzipped one and a clean gzipped payload inside a changed one.
-Determinism is checked by repeat, reversed key order, a fresh process with a different hash seed,
-and a fresh process receiving the reordered bundle first, each pair more than a second apart so
-output that depends on the clock shows up. The service runs under -I -S in a private scratch
-directory as an unprivileged account started with only --port.
+the task or fixed by the service config; what is held out is the data and the combinations. Every
+graded bundle is generated at grade time and nothing is replayed from the samples. The generator
+plants each sensitive class in a field the response carries, where no other rule would catch it
+by accident: declared identifiers (some written twice in one line), node names from plain and
+hyphenated families including an unlisted sibling and an upper-case FQDN, a hostname under each
+of the three suffixes, addresses in every /16 of every configured range, a node address outside
+all of them, MACs in both cases, a credential under an env name for each of the six hints, and
+bearer, Vault, pull-secret and service-account values. It plants what must survive beside them:
+public and link-local addresses, private addresses in the /16s on either side of each configured
+range, a public hostname that only contains an internal suffix part-way through, path-valued and
+non-credential env values, upstream image references, digests, versions, errata, and clean
+gzipped, clean text and binary payloads byte for byte. A resource reference nested inside a spec
+checks that items come from evidence.resources only. The tests check the exact shape, order and
+copied fields; that no planted sensitive value, or the tail a partial replacement would leave,
+appears in the response or inside any payload it carries, decoded recursively, one test per class
+so each can pass on its own; and that every planted non-sensitive value survives. A positional
+comparison then takes each returned name, node, message and line, with payloads unfolded to what
+they decode to and how they were encoded, and requires the text between the sensitive values to
+be exactly the original, including leading and trailing spaces, tabs and newlines; it fixes
+everything a placeholder does not cover and deliberately does not fix the placeholder text.
+Consistency and injectivity use single-value probe lines compared whole, so no placeholder syntax
+is assumed: every probed value, all six env credentials among them, must get one placeholder and
+no two may share one, and the same node must get the same placeholder in an item name, an item
+node, an event and a log line. Further probes require a hostname and a MAC to map the same in
+either case, a token after Bearer to match the token on its own with the following punctuation
+intact, and an address with a port, as a range, or as a reverse name to take the plain address's
+placeholder; payload probes require each returned payload to decode to the original with only the
+sensitive values replaced, gzipped exactly when the original was. Determinism is checked by
+repeat, reversed key order, and two restart tests, each pair more than a second apart. Each test
+starts its own copy of the service under -I -S as an unprivileged account; before and after every
+run the verifier kills every process and removes every file and System V IPC object that account
+owns, so a response cannot be replayed from state an earlier run left behind. The verifier's
+packages sit in a root-only directory with pip removed, and a test confirms the service account
+cannot import them or read the test file. A suite of 132 broken variants of the reference
+(narrowed and widened ranges, each hint dropped, per-field placeholder maps, stripped or
+collapsed text, partly replaced values, replay caches in files, a detached process and shared
+memory) is rejected.
 """
 
 relevant_experience = """

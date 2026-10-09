@@ -30,7 +30,7 @@
       "event_id": "EV-90021",
       "reason": "Failed",
       "namespace": "mesa-backup",
-      "message": "Failed to pull image \"[redacted-4]:8443/mesa-backup/velero@sha256:86990cd7180b7c5fb3e269a2b9eda5a87a0efc7016e0b457e6dd80a4fc2f3c4c\": unauthorized: authentication required"
+      "message": "Failed to pull image \"[redacted-4]/mesa-backup/velero@sha256:86990cd7180b7c5fb3e269a2b9eda5a87a0efc7016e0b457e6dd80a4fc2f3c4c\": unauthorized: authentication required"
     },
     {
       "event_id": "EV-90088",
@@ -50,11 +50,11 @@
     },
     {
       "source": "ovnkube-node",
-      "line": "2026-09-14T06:09:40Z I: node subnet [redacted-9]/23 allocated from cluster network [redacted-10]/14; service network [redacted-11]/16; egress to 151.101.0.0/16 allowed"
+      "line": "2026-09-14T06:09:40Z I: node subnet [redacted-9]/23 allocated from cluster network [redacted-10]/14; service network [redacted-11]/16; egress to 151.101.0.0/16 allowed; partner network 10.132.0.0/16 reached via 172.31.0.4"
     },
     {
       "source": "cluster-version-operator",
-      "line": "2026-09-14T06:10:02Z I: Retrieving payload quay.io/openshift-release-dev/ocp-release@sha256:34d634a0c5483692c78ecc3ab48eacb237a8fa36071b2b192b04fc155c48b37d mirrored to [redacted-4]:8443/openshift-release-dev/ocp-release"
+      "line": "2026-09-14T06:10:02Z I: Retrieving payload quay.io/openshift-release-dev/ocp-release@sha256:34d634a0c5483692c78ecc3ab48eacb237a8fa36071b2b192b04fc155c48b37d mirrored to [redacted-4]/openshift-release-dev/ocp-release"
     },
     {
       "source": "velero",
@@ -62,7 +62,7 @@
     },
     {
       "source": "kube-apiserver",
-      "line": "2026-09-14T06:11:31Z E: authentication error for serviceaccount [redacted-13] from [redacted-14] ; known issue RHSA-2026:5512, tracked at https://issues.redhat.com/browse/OCPBUGS-41220"
+      "line": "2026-09-14T06:11:31Z E: authentication error for serviceaccount [redacted-13] from [redacted-14] ; known issue RHSA-2026:5512, tracked at https://issues.redhat.com/browse/OCPBUGS-41220; runbook https://kb.cluster.local.docs.example.org/etcd-recovery"
     },
     {
       "source": "etcd",

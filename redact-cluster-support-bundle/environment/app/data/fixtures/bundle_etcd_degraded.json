@@ -167,7 +167,7 @@
       },
       {
         "source": "ovnkube-node",
-        "line": "2026-09-14T06:09:40Z I: node subnet 10.128.4.0/23 allocated from cluster network 10.128.0.0/14; service network 172.30.0.0/16; egress to 151.101.0.0/16 allowed"
+        "line": "2026-09-14T06:09:40Z I: node subnet 10.128.4.0/23 allocated from cluster network 10.128.0.0/14; service network 172.30.0.0/16; egress to 151.101.0.0/16 allowed; partner network 10.132.0.0/16 reached via 172.31.0.4"
       },
       {
         "source": "cluster-version-operator",
@@ -179,7 +179,7 @@
       },
       {
         "source": "kube-apiserver",
-        "line": "2026-09-14T06:11:31Z E: authentication error for serviceaccount system:serviceaccount:mesa-backup:velero from 10.128.4.77 ; known issue RHSA-2026:5512, tracked at https://issues.redhat.com/browse/OCPBUGS-41220"
+        "line": "2026-09-14T06:11:31Z E: authentication error for serviceaccount system:serviceaccount:mesa-backup:velero from 10.128.4.77 ; known issue RHSA-2026:5512, tracked at https://issues.redhat.com/browse/OCPBUGS-41220; runbook https://kb.cluster.local.docs.example.org/etcd-recovery"
       },
       {
         "source": "etcd",

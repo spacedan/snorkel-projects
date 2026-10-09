@@ -176,8 +176,12 @@
         "line": "2026-09-16T11:05:40Z pulled docker.io/library/busybox@sha256:9d75f0d7c398df565d7ac04c6819b62d6d8f9560f5eb4672596ecd8f7e96ae91 for debug pod on infra-gpu-02"
       },
       {
+        "source": "kubelet",
+        "line": "2026-09-16T11:05:44Z E: image pull for nvidia-driver denied by mirror; credentials in use: eyJhdXRocyI6eyJtaXJyb3IuY29ycC5leGFtcGxlLm5ldDo1MDAwIjp7ImF1dGgiOiJaV1JuWlMxd2RXeHNPbHByTkhkeE9WUnlUREoyVFE9PSJ9fX0= (from edge-mirror-creds)"
+      },
+      {
         "source": "vault-agent",
-        "line": "2026-09-16T11:05:58Z auth renewal failed, cached hvs.CAESIGq3Xv9Lm2Tk8RbW4nYp rejected by https://vault.mesa.internal:8200"
+        "line": "2026-09-16T11:05:58Z auth renewal failed, cached hvs.CAESIGq3Xv9Lm2Tk8RbW4nYp; Authorization: Bearer hvs.CAESIGq3Xv9Lm2Tk8RbW4nYp rejected by https://vault.mesa.internal:8200"
       }
     ]
   }

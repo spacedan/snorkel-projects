@@ -3,19 +3,20 @@
 The agent is given three sample bundles with the summaries the release desk
 cleared for them, plus the estate's ranges, suffixes and env-var hints in the
 service config. Every behaviour asserted here is shown at least once in those
-cleared summaries; what is held out is the data and the combinations (an
-address form applied to a node address outside the ranges, a payload nested
-under a gzipped one, a hyphenated node family, and so on).
+cleared summaries or fixed by that config; what is held out is the data and
+the combinations (an address form applied to a node address outside the
+ranges, a payload nested under a gzipped one, a hyphenated node family, and
+so on).
 
 Every graded bundle is generated at grade time. Nothing is replayed from the
-sample bundles shipped in the agent image: cluster names, node families,
-addresses and the forms they are written in, credentials, encoded file
-payloads, resource ids, reasons, namespaces, registries, digests, versions and
-errata are all fresh,
-so a service tuned to the samples cannot pass. The generator records what it
-planted, and the assertions compare the response against that record. The
-agent's own service is executed and driven over HTTP; nothing here
-reimplements redaction.
+sample bundles shipped in the agent image, so a service tuned to the samples
+cannot pass. The generator records what it planted, and the assertions compare
+the response against that record. The agent's own service is executed and
+driven over HTTP; nothing here reimplements redaction.
+
+Each test starts its own copy of the service. Before and after every run, all
+processes and files belonging to the service account are removed, so nothing
+one run leaves behind can be read by another.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import pwd
 import random
 import re
 import shutil
+import signal
 import socket
 import string
 import subprocess
@@ -44,15 +46,23 @@ SERVICE_USER = "sluicesvc"
 
 SUFFIXES = [".mesa.internal", ".svc.cluster.local", ".cluster.local"]
 UPSTREAM = ["quay.io", "registry.redhat.io", "ghcr.io", "docker.io"]
-CLUSTER_PREFIXES = ["10.21", "10.44", "10.128", "172.30", "127"]
+# One entry per /16 of every configured range, so the whole of each range is exercised.
+CLUSTER_PREFIXES = ["10.21", "10.44", "10.128", "10.129", "10.130", "10.131", "172.30", "127"]
+# Private space that borders the configured ranges but is not the estate's.
+NEIGHBOUR_PREFIXES = ["10.20", "10.22", "10.43", "10.45", "10.127", "10.132", "172.29", "172.31"]
 PUBLIC_PREFIXES = ["151.101", "104.18", "23.215"]
-SECRET_ENV_NAMES = ["APP_SECRET", "DB_PASSWORD", "API_TOKEN", "SESSION_KEY", "REGISTRY_AUTH", "AWS_CREDENTIALS"]
+# One env-var name per configured hint, each containing that hint and no other.
+SECRET_ENV_NAMES = ["DB_PASS", "APP_SECRET", "API_TOKEN", "AWS_CREDENTIALS", "REGISTRY_AUTH", "SESSION_KEY"]
 CONDITIONS = ["EtcdMembersDegraded", "APIServerUnavailable", "NodeNotReady", "CrashLoopBackOff",
               "FailedMount", "ImagePullBackOff", "PodPending"]
 
 ITEM_KEYS = {"resource_id", "kind", "namespace", "name", "condition", "node"}
 EVENT_KEYS = {"event_id", "reason", "namespace", "message"}
 LOG_KEYS = {"source", "line"}
+
+LEAK_GROUPS = ["declared identifiers", "node names", "hostnames", "addresses",
+               "reverse-DNS names of cluster addresses", "reverse-DNS names of node addresses",
+               "MAC addresses", "credentials and accounts"]
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +89,10 @@ def _mac(rng):
 def reverse_name(address):
     """The reverse-DNS form of an IPv4 address."""
     return ".".join(reversed(address.split("."))) + ".in-addr.arpa"
+
+
+def reverse_octets(address):
+    return ".".join(reversed(address.split(".")))
 
 
 class Addresses:
@@ -145,11 +159,71 @@ def expanded(text):
     return "\n".join(parts)
 
 
+def unfolded(text):
+    """`text` with every decodable data-URL payload replaced, in place and
+    recursively, by what it decodes to, marked with how it was encoded."""
+    def swap(match):
+        inner, gzipped = open_payload(match.group(1))
+        if inner is None:
+            return match.group(0)
+        head = match.group(0)[: match.start(1) - match.start(0)]
+        return "%s\x01%s:%s\x02" % (head, "gzip" if gzipped else "plain", unfolded(inner))
+    return DATA_URL.sub(swap, text)
+
+
+QUAD = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}")
+
+
+def pieces(value):
+    """The parts of a sensitive value that a partial replacement would leave
+    behind: three octets of an address, or the ends and halves of anything else."""
+    if QUAD.fullmatch(value):
+        octets = value.split(".")
+        return [".".join(octets[:3]) + ".", "." + ".".join(octets[1:])]
+    found = []
+    if len(value) >= 8:
+        found += [value[:6], value[-6:]]
+    if len(value) >= 12:
+        found += [value[: len(value) // 2], value[len(value) // 2:]]
+    return sorted(set(found))
+
+
+class Truth:
+    """What the generator planted."""
+
+    def __init__(self):
+        self.leaks = []      # (group, label, string): must not appear in the response text
+        self.spans = set()   # every sensitive string as written in the bundle
+        self.preserved = {}  # label -> string that must survive
+        self.info = {}
+
+    def sensitive(self, group, label, value):
+        self.leaks.append((group, label, value))
+        self.spans.add(value)
+
+    def add_partial_leaks(self, carried):
+        """Replacing only part of a value still gives the rest away. A piece
+        that also occurs in the text around the planted values is left out, so
+        nothing that legitimately stays can be mistaken for a leak."""
+        rest = "\n".join(unfolded(text) for text in carried)
+        for value in sorted(self.spans, key=lambda v: (-len(v), v)):
+            rest = rest.replace(value, "\x00")
+        for group, label, value in list(self.leaks):
+            if value not in self.spans:
+                continue
+            for piece in pieces(value):
+                if piece not in rest:
+                    self.leaks.append((group, "part of the %s" % label, piece))
+
+    def keep(self, label, value):
+        self.preserved[label] = value
+
+
 def generate(seed, nonce=0):
     """Build a fresh bundle; retried with a new nonce in the rare case a
     planted payload happens to look like one of the credential forms."""
     bundle, truth = _generate(seed, nonce)
-    for url in truth["payload_urls"]:
+    for url in truth.info["payload_urls"]:
         body = url.split(",", 1)[1]
         if body.startswith("eyJ") or re.search(r"[+/]eyJ|hvs\.", body):
             return generate(seed, nonce + 1)
@@ -165,12 +239,13 @@ def _generate(seed, nonce=0):
     """
     rng = random.Random("bundle:%d:%d" % (seed, nonce))
     addrs = Addresses(rng)
+    t = Truth()
 
     cluster_name = "%s-%s" % (_w(rng, 4), _w(rng, 5))
     domain = _w(rng, 6)
-    suffix = SUFFIXES[seed % len(SUFFIXES)]
-    node_prefix = rng.choice([_w(rng, 5), "%s-%s" % (_w(rng, 4), _w(rng, 4))])
-    infra_id = "%s-%s" % (cluster_name, _alnum(rng, 5))
+    node_prefix = "%s-%s" % (_w(rng, 4), _w(rng, 4)) if (seed // 2) % 2 else _w(rng, 5)
+    infra_tail = _alnum(rng, 7)
+    infra_id = "%s-%s" % (cluster_name, infra_tail)
     api_url = "https://api.%s.mesa.internal:6443" % cluster_name
     # A mirror host deliberately not under an internal suffix: only the
     # declared cluster.mirror_registry value makes it sensitive.
@@ -179,6 +254,11 @@ def _generate(seed, nonce=0):
     submitted_by = "%s-ops" % _w(rng, 6)
     bundle_id = "SB-2026%02d%02d-%04d" % (rng.randrange(1, 13), rng.randrange(1, 29), rng.randrange(1, 9999))
     service_account = "system:serviceaccount:%s:%s" % (_w(rng, 6), _w(rng, 6))
+    for label, value in (("cluster name", cluster_name), ("infra id", infra_id), ("api url", api_url),
+                         ("mirror registry", mirror), ("collected_by account", collected_by),
+                         ("submitted_by account", submitted_by), ("bundle id", bundle_id)):
+        t.sensitive("declared identifiers", label, value)
+    t.leaks.append(("declared identifiers", "the part of the infra id after the cluster name", "-" + infra_tail))
 
     node_names, node_ips, node_macs, nodes = [], [], [], []
     for index in range(rng.randrange(2, 5)):
@@ -202,7 +282,16 @@ def _generate(seed, nonce=0):
                                 "message": "kubelet on %s" % fqdn}],
             }
         )
+        t.sensitive("node names", "node %s" % short, short)
+        t.sensitive("node names", "node fqdn %s" % short, fqdn)
+        t.sensitive("addresses", "node address %d" % index, ip)
+        t.sensitive("MAC addresses", "mac %d" % index, mac)
     unlisted = "%s-%02d" % (node_prefix, 70 + seed % 20)
+    t.sensitive("node names", "unlisted node", unlisted)
+    upper_fqdn = node_names[1][1].upper()
+    t.sensitive("node names", "node hostname in upper case", upper_fqdn)
+    upper_mac = node_macs[1].upper()
+    t.sensitive("MAC addresses", "node MAC in upper case", upper_mac)
 
     namespaces = [_w(rng, 7) for _ in range(3)]
     reasons = ["%s%s" % (_w(rng, 4).capitalize(), _w(rng, 5).capitalize()) for _ in range(3)]
@@ -211,6 +300,7 @@ def _generate(seed, nonce=0):
     resources = []
     for index in range(rng.randrange(4, 8)):
         short, fqdn = node_names[index % len(node_names)]
+        names = SECRET_ENV_NAMES if index == 0 else [SECRET_ENV_NAMES[(seed + index) % len(SECRET_ENV_NAMES)]]
         resources.append(
             {
                 "resource_id": "RES-%s" % _alnum(rng, 6),
@@ -226,28 +316,45 @@ def _generate(seed, nonce=0):
                             "name": _w(rng, 5),
                             "image": "%s/%s/%s@sha256:%s"
                             % (UPSTREAM[index % len(UPSTREAM)], _w(rng, 5), _w(rng, 6), _hex(rng, 64)),
-                            "env": [
-                                {"name": SECRET_ENV_NAMES[(seed + index) % len(SECRET_ENV_NAMES)],
-                                 "value": _alnum(rng, 18)},
+                            "env": [{"name": name, "value": _alnum(rng, 18)} for name in names] + [
                                 {"name": "TLS_KEY_FILE", "value": key_path},
                                 {"name": "REGION_LABEL", "value": region},
                             ],
                         }
-                    ]
+                    ],
+                    # Metadata inside spec is not a resource entry of its own.
+                    "template": {"resource_id": "RES-%s" % _alnum(rng, 6), "kind": "ReplicaSet"},
                 },
             }
         )
-
-    env_secret = resources[0]["spec"]["containers"][0]["env"][0]["value"]
+    env_secrets = {var["name"]: var["value"] for var in resources[0]["spec"]["containers"][0]["env"][:6]}
     env_secret_2 = resources[1]["spec"]["containers"][0]["env"][0]["value"]
+    for name, value in env_secrets.items():
+        t.sensitive("credentials and accounts", "value of env var %s" % name, value)
+
     bearer = _alnum(rng, 22)
     vault = "hvs.%s" % _alnum(rng, 20)
-    b64 = b64enc(json.dumps(
+    pull_secret = b64enc(json.dumps(
         {"auths": {mirror: {"auth": b64enc(("%s:%s" % (_w(rng, 5), _alnum(rng, 12))).encode())}}},
         separators=(",", ":")).encode())
-    assert b64.startswith("eyJ")
-    svc_host = "%s.%s%s" % (_w(rng, 7), namespaces[0], suffix)
-    plain_internal = "%s.mesa.internal" % _w(rng, 8)
+    assert pull_secret.startswith("eyJ")
+    for label, value in (("bearer token", bearer), ("vault token", vault), ("pull secret", pull_secret),
+                         ("service account", service_account)):
+        t.sensitive("credentials and accounts", label, value)
+
+    # One internal hostname under each configured suffix.
+    hosts = [
+        "%s.mesa.internal" % _w(rng, 8),
+        "%s.%s.svc.cluster.local" % (_w(rng, 7), namespaces[0]),
+        "%s.%s.pod.cluster.local" % (_w(rng, 7), namespaces[1]),
+    ]
+    for host, suffix in zip(hosts, SUFFIXES):
+        t.sensitive("hostnames", "host under %s" % suffix, host)
+        t.leaks.append(("hostnames", "first label of the host under %s" % suffix, host.split(".")[0]))
+        t.leaks.append(("hostnames", "suffix %s left behind" % suffix, suffix))
+    # A public name that only contains a suffix part-way through is not internal.
+    lookalike = "%s.cluster.local.%s.example.org" % (_w(rng, 6), _w(rng, 5))
+
     version = "4.%d.%d" % (rng.randrange(10, 20), rng.randrange(0, 20))
     errata = "%s-2026:%d" % (rng.choice(["RHBA", "RHSA", "RHEA"]), rng.randrange(1000, 9999))
     issue_url = "https://%s/browse/%s-%d" % (
@@ -262,10 +369,20 @@ def _generate(seed, nonce=0):
     # Addresses written in their other forms.
     port_addr = addrs.take("10.44")
     ptr_addr = addrs.take("10.21")
-    subnet = "10.128.%d.0" % (2 * rng.randrange(1, 120))
+    subnet = "%s.%d.0" % (rng.choice(["10.128", "10.129", "10.130", "10.131"]), 2 * rng.randrange(1, 120))
     range_lo, range_hi = addrs.take("10.21"), addrs.take("10.21")
     public = addrs.take(PUBLIC_PREFIXES[seed % len(PUBLIC_PREFIXES)])
     public_net = "%s.0.0/16" % PUBLIC_PREFIXES[seed % len(PUBLIC_PREFIXES)]
+    neighbours = [addrs.take(prefix) for prefix in NEIGHBOUR_PREFIXES]
+    for label, value in (("address with a port", port_addr), ("network address of a range", subnet),
+                         ("low end of a range", range_lo), ("high end of a range", range_hi)):
+        t.sensitive("addresses", label, value)
+    # The forward address never appears; only its reverse-DNS name does.
+    t.leaks.append(("reverse-DNS names of cluster addresses", "address behind a reverse-DNS name", ptr_addr))
+    t.sensitive("reverse-DNS names of cluster addresses", "reverse-DNS octets of a cluster address",
+                reverse_octets(ptr_addr))
+    t.sensitive("reverse-DNS names of node addresses", "reverse-DNS octets of a node address",
+                reverse_octets(node_ips[0]))
 
     events = [
         {
@@ -281,7 +398,7 @@ def _generate(seed, nonce=0):
             "reason": reasons[1],
             "namespace": namespaces[1],
             "count": rng.randrange(1, 900),
-            "message": "probe to %s (%s) failed; %s is healthy" % (svc_host, node_ips[1], upstream_ref),
+            "message": "probe to %s (%s) failed; %s is healthy" % (hosts[1], node_ips[1], upstream_ref),
         },
         {
             "event_id": "EV-%s" % _alnum(rng, 5),
@@ -291,18 +408,36 @@ def _generate(seed, nonce=0):
             "message": "Get \"https://%s:%d/healthz\": dial tcp %s:%d: connection refused"
             % (port_addr, 10250, port_addr, 10250),
         },
+        # Runtime errors arrive as several lines, the last one ending in a newline.
+        {
+            "event_id": "EV-%s" % _alnum(rng, 5),
+            "reason": reasons[0],
+            "namespace": namespaces[1],
+            "count": rng.randrange(1, 900),
+            "message": "failed to set up sandbox network:\n  plugin type=\"%s\" failed (add): no reply from %s:9107 on %s\n"
+            % (_w(rng, 6), node_ips[1], node_names[1][0]),
+        },
     ]
     excerpts = [
         {"source": _w(rng, 6), "line": "collecting cluster %s id %s via %s" % (cluster_name, infra_id, api_url)},
         {"source": _w(rng, 6), "line": "peer %s unreachable from %s" % (unlisted, node_names[0][0])},
-        {"source": _w(rng, 6), "line": "Authorization: Bearer %s to %s" % (bearer, plain_internal)},
-        {"source": _w(rng, 6), "line": "vault %s pull secret %s" % (vault, b64)},
+        # Leading and trailing spaces are part of the line.
+        {"source": "kubelet", "line": "  lease for %s renewed through %s  " % (node_names[1][0], node_names[0][0])},
+        {"source": _w(rng, 6), "line": "%s paged %s; %s acknowledged for %s and again for %s"
+                                       % (submitted_by, collected_by, submitted_by, infra_id, infra_id)},
+        {"source": _w(rng, 6), "line": "drain %s, then %s, then %s again" % (node_names[0][0], unlisted, node_names[0][0])},
+        {"source": "iptables", "line": "ACCEPT\ttcp  --  %s\t%s  dpt:%d" % (public, port_addr, 6443)},
+        {"source": _w(rng, 6), "line": "Authorization: Bearer %s; retrying against %s" % (bearer, hosts[0])},
+        {"source": _w(rng, 6), "line": "vault %s pull secret %s" % (vault, pull_secret)},
+        {"source": _w(rng, 6), "line": "cached %s; Authorization: Bearer %s" % (vault, vault)},
         {"source": _w(rng, 6), "line": "bundle %s submitted by %s as %s collected by %s"
                                        % (bundle_id, submitted_by, service_account, collected_by)},
         {"source": _w(rng, 6), "line": "running %s version %s; see %s and %s" % (upstream_ref, version, errata, issue_url)},
-        {"source": _w(rng, 6), "line": "env secret %s on %s; key file %s; region %s"
-                                       % (env_secret, node_ips[-1], key_path, region)},
-        {"source": "sshd", "line": "reverse mapping checking getaddrinfo for %s failed" % node_names[1][1].upper()},
+        {"source": _w(rng, 6), "line": "key file %s; region %s; runbook https://%s/guide"
+                                       % (key_path, region, lookalike)},
+        {"source": _w(rng, 6), "line": "resolver answered for %s and %s" % (hosts[2], hosts[1])},
+        {"source": "sshd", "line": "reverse mapping checking getaddrinfo for %s failed" % upper_fqdn},
+        {"source": "arp", "line": "%s is at %s on br-ex" % (node_ips[1], upper_mac)},
         {"source": "cloud-init", "line": "metadata service at 169.254.169.254:80 unreachable; bridge virbr0 192.168.122.1 up"},
         {"source": "coredns", "line": "[INFO] %s:%d - %d \"PTR IN %s. udp 44 false 512\" NXDOMAIN"
                                       % (node_ips[1], rng.randrange(30000, 60000), rng.randrange(1000, 9999),
@@ -314,19 +449,24 @@ def _generate(seed, nonce=0):
         {"source": "ovnkube", "line": "node subnet %s/23 allocated; egress to %s allowed; kubelet at %s:10250"
                                       % (subnet, public_net, node_ips[0])},
         {"source": "metallb", "line": "pool assigned %s-%s; upstream check %s:443 ok" % (range_lo, range_hi, public)},
+        {"source": "ovnkube", "line": "routes outside the estate: %s" % " ".join(neighbours)},
     ]
+    for name, value in env_secrets.items():
+        excerpts.append({"source": _w(rng, 6), "line": "container %s exited: credential %s rejected" % (_w(rng, 5), value)})
     for index, ip in enumerate(node_ips):
         excerpts.append({"source": "addr%d" % index, "line": "endpoint %s and %s" % (ip, node_macs[index])})
     stray_mac = _mac(rng)
+    t.sensitive("MAC addresses", "undeclared mac", stray_mac)
     stray_ips = [addrs.take(prefix) for prefix in CLUSTER_PREFIXES]
     excerpts.append({"source": "stray-mac", "line": "adapter %s seen on the wire" % stray_mac})
-    for index, ip in enumerate(stray_ips):
-        excerpts.append({"source": "stray-ip%d" % index, "line": "peer %s answered" % ip})
+    for prefix, ip in zip(CLUSTER_PREFIXES, stray_ips):
+        t.sensitive("addresses", "undeclared address in %s" % prefix, ip)
+        excerpts.append({"source": "stray-ip", "line": "peer %s answered" % ip})
     registry_refs = {}
     for index, host in enumerate(UPSTREAM):
         ref = "%s/%s/%s@sha256:%s" % (host, _w(rng, 5), _w(rng, 5), _hex(rng, 64))
         registry_refs[host] = ref
-        excerpts.append({"source": "reg%d" % index, "line": "pulled %s ok" % ref})
+        excerpts.append({"source": "crio", "line": "pulled %s ok" % ref})
 
     # File contents carried as data URLs. Sensitive ones must be sanitized in
     # place; clean and non-text ones must come back byte for byte.
@@ -363,6 +503,11 @@ def _generate(seed, nonce=0):
                       ("chrony.d/pool.conf", clean_gz), ("systemd/unit", clean_text), ("logo.png", binary)):
         excerpts.append({"source": "machine-config-daemon",
                          "line": "writing file /etc/%s contents %s mode 0644" % (path, url)})
+    for label, value in (("address inside a gzipped payload", payload_addr),
+                         ("hostname inside a gzipped payload", payload_host),
+                         ("address inside a nested payload", nested_addr),
+                         ("env secret inside a nested payload", env_secret_2)):
+        t.sensitive("payload contents", label, value)
 
     bundle = {
         "bundle_id": bundle_id,
@@ -380,88 +525,43 @@ def _generate(seed, nonce=0):
         "evidence": {"resources": resources, "nodes": nodes, "events": events, "log_excerpts": excerpts},
     }
 
-    sensitive = {
-        "cluster name": cluster_name,
-        "infra id": infra_id,
-        "api url": api_url,
-        "mirror registry": mirror,
-        "collected_by account": collected_by,
-        "submitted_by account": submitted_by,
-        "bundle id": bundle_id,
-        "unlisted node": unlisted,
-        "service dns host": svc_host,
-        "internal host": plain_internal,
-        "env secret": env_secret,
-        "env secret inside a nested payload": env_secret_2,
-        "node hostname in upper case": node_names[1][1].upper(),
-        "bearer token": bearer,
-        "vault token": vault,
-        "base64 secret": b64,
-        "service account": service_account,
-        "undeclared mac": stray_mac,
-        "address with a port": port_addr,
-        "address in reverse-DNS form": ptr_addr,
-        "reverse-DNS octets of a cluster address": reverse_name(ptr_addr)[: -len(".in-addr.arpa")],
-        "reverse-DNS octets of a node address": reverse_name(node_ips[0])[: -len(".in-addr.arpa")],
-        "network address of a range": subnet,
-        "low end of a range": range_lo,
-        "high end of a range": range_hi,
-    }
-    for short, fqdn in node_names:
-        sensitive["node %s" % short] = short
-        sensitive["node fqdn %s" % short] = fqdn
-    for index, ip in enumerate(node_ips):
-        sensitive["node address %d" % index] = ip
-    for index, mac in enumerate(node_macs):
-        sensitive["mac %d" % index] = mac
-    sensitive["address inside a gzipped payload"] = payload_addr
-    sensitive["hostname inside a gzipped payload"] = payload_host
-    sensitive["address inside a nested payload"] = nested_addr
-    for index, ip in enumerate(stray_ips):
-        sensitive["undeclared address in %s" % CLUSTER_PREFIXES[index]] = ip
-    for host in (svc_host, plain_internal):
-        sensitive["host label %s" % host.split(".")[0]] = host.split(".")[0]
-    sensitive["dns suffix .mesa.internal"] = ".mesa.internal"
-    sensitive["dns suffix %s" % suffix] = suffix
-
-    preserved = {
-        "upstream reference": upstream_ref,
-        "sha512 digest": digest512,
-        "digest of a mirrored image": mirror_digest,
-        "version": version,
-        "errata": errata,
-        "issue url": issue_url,
-        "absolute-path env value": key_path,
-        "value of an env var that is not a credential": region,
-        "link-local metadata address": "169.254.169.254:80",
-        "private address that is not the estate's": "virbr0 192.168.122.1 up",
-        "public address in reverse-DNS form": reverse_name(public),
-        "public address with a port": "%s:443" % public,
-        "public address": "via %s:53" % public,
-        "public range": public_net,
-    }
+    for label, value in (
+        ("upstream reference", upstream_ref), ("sha512 digest", digest512),
+        ("digest of a mirrored image", mirror_digest), ("version", version), ("errata", errata),
+        ("issue url", issue_url), ("absolute-path env value", key_path),
+        ("value of an env var that is not a credential", region),
+        ("public name that only contains an internal suffix part-way", lookalike),
+        ("link-local metadata address", "169.254.169.254:80"),
+        ("private address that is not the estate's", "virbr0 192.168.122.1 up"),
+        ("public address in reverse-DNS form", reverse_name(public)),
+        ("public address with a port", "%s:443" % public), ("public address", "via %s:53" % public),
+        ("public range", public_net),
+        ("gzipped payload with nothing sensitive (byte for byte)", clean_gz),
+        ("text payload with nothing sensitive (byte for byte)", clean_text),
+        ("non-text payload (byte for byte)", binary),
+    ):
+        t.keep(label, value)
+    for prefix, ip in zip(NEIGHBOUR_PREFIXES, neighbours):
+        t.keep("private address in %s, next to a configured range" % prefix, ip)
     for host, ref in registry_refs.items():
-        preserved["upstream reference %s" % host] = ref
-    preserved["gzipped payload with nothing sensitive (byte for byte)"] = clean_gz
-    preserved["text payload with nothing sensitive (byte for byte)"] = clean_text
-    preserved["non-text payload (byte for byte)"] = binary
+        t.keep("upstream reference %s" % host, ref)
     for index, word in enumerate(keep):
-        preserved["non-sensitive text %d inside a sanitized payload" % index] = word
+        t.keep("non-sensitive text %d inside a sanitized payload" % index, word)
 
-    truth = {
-        "sensitive": sensitive,
-        "preserved": preserved,
-        "node_ips": node_ips,
-        "port_addr": port_addr,
-        "ptr_addr": ptr_addr,
-        "subnet": subnet,
-        "range": (range_lo, range_hi),
-        "stray_ips": stray_ips,
-        "node_macs": node_macs,
-        "unlisted": unlisted,
+    t.add_partial_leaks(
+        [text for res in resources for text in (res["name"], res["node"])]
+        + [event["message"] for event in events]
+        + [excerpt["line"] for excerpt in excerpts]
+    )
+    t.info = {
+        "node_names": node_names, "node_ips": node_ips, "node_macs": node_macs, "unlisted": unlisted,
+        "hosts": hosts, "lookalike": lookalike, "port_addr": port_addr, "ptr_addr": ptr_addr,
+        "subnet": subnet, "range": (range_lo, range_hi), "stray_ips": stray_ips, "stray_mac": stray_mac,
+        "collected_by": collected_by, "service_account": service_account, "vault": vault, "bearer": bearer,
+        "pull_secret": pull_secret, "env_secrets": env_secrets,
         "payload_urls": [registries, chrony, ignition, inner, clean_gz, clean_text, binary],
     }
-    return bundle, truth
+    return bundle, t
 
 
 # ---------------------------------------------------------------------------
@@ -482,29 +582,98 @@ def service_uid():
         return None
 
 
+_WRITABLE = None
+
+
+def writable_places(uid):
+    """Directories the service account can create things in, found once."""
+    global _WRITABLE
+    if _WRITABLE is None:
+        gid = pwd.getpwuid(uid).pw_gid
+        found = []
+        for root, dirs, _ in os.walk("/", topdown=True):
+            dirs[:] = [d for d in dirs if os.path.join(root, d) not in ("/proc", "/sys")]
+            try:
+                info = os.lstat(root)
+            except OSError:
+                continue
+            if info.st_uid == uid or info.st_mode & 0o002 or (info.st_gid == gid and info.st_mode & 0o020):
+                found.append(root)
+        _WRITABLE = found
+    return _WRITABLE
+
+
+def purge_service_state():
+    """Kill every process and delete every file that belongs to the service account,
+    so one run of the submitted service can leave nothing for the next."""
+    uid = service_uid()
+    if os.geteuid() != 0 or uid is None:
+        return
+    for _ in range(20):
+        alive = False
+        for pid in filter(str.isdigit, os.listdir("/proc")):
+            try:
+                if os.stat("/proc/%s" % pid).st_uid == uid:
+                    os.kill(int(pid), signal.SIGKILL)
+                    alive = True
+            except OSError:
+                pass
+        if not alive:
+            break
+        time.sleep(0.05)
+    left = []
+    for place in list(writable_places(uid)):
+        for root, dirs, files in os.walk(place, topdown=False):
+            for name in files + dirs:
+                path = os.path.join(root, name)
+                try:
+                    if os.lstat(path).st_uid != uid:
+                        continue
+                    if os.path.isdir(path) and not os.path.islink(path):
+                        os.rmdir(path)
+                    else:
+                        os.unlink(path)
+                except OSError:
+                    left.append(path)
+    assert not left, "could not clear what the service account left behind: %r" % left[:5]
+    # System V shared memory, queues and semaphores outlive the process too.
+    for kind, column, flag in (("shm", "shmid", "-m"), ("msg", "msqid", "-q"), ("sem", "semid", "-s")):
+        try:
+            with open("/proc/sysvipc/%s" % kind) as table:
+                rows = [row.split() for row in table.read().splitlines()]
+        except OSError:
+            continue
+        if not rows or column not in rows[0] or "uid" not in rows[0]:
+            continue
+        ident, owner = rows[0].index(column), rows[0].index("uid")
+        for row in rows[1:]:
+            if int(row[owner]) == uid and shutil.which("ipcrm"):
+                subprocess.run(["ipcrm", flag, row[ident]], capture_output=True)
+
+
 class Service:
     """One isolated run of the submitted service.
 
-    Each instance gets a private scratch directory that is removed on exit, so
-    two processes cannot share state, and runs under -I -S so that packages
-    installed for the verifier are not importable by submitted code.
+    Each instance gets a private scratch directory, runs under -I -S so that
+    packages installed for the verifier are not importable by submitted code,
+    and is bracketed by purge_service_state(), so no process, file or cache
+    from an earlier run can still exist when this one starts.
     """
 
-    def __init__(self, hashseed="0"):
+    def __init__(self):
         self.port = free_port()
-        self.hashseed = hashseed
         self.root = None
         self.proc = None
 
     def __enter__(self):
+        purge_service_state()
         self.root = tempfile.mkdtemp(prefix="sluice-")
         script = os.path.join(self.root, "intake_server.py")
         shutil.copyfile(ARTIFACT, script)
-        os.chmod(script, 0o555)
+        os.chmod(script, 0o444)
 
         env = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
-            "PYTHONHASHSEED": self.hashseed,
             "PYTHONDONTWRITEBYTECODE": "1",
             "HOME": self.root,
             "TMPDIR": self.root,
@@ -512,7 +681,6 @@ class Service:
         kwargs = {}
         uid = service_uid()
         if os.geteuid() == 0 and uid is not None:
-            os.chown(script, uid, -1)
             os.chmod(self.root, 0o1777)
             kwargs["user"] = SERVICE_USER
 
@@ -540,7 +708,7 @@ class Service:
                 with socket.create_connection(("127.0.0.1", self.port), timeout=0.5):
                     return
             except OSError:
-                time.sleep(0.2)
+                time.sleep(0.1)
         raise AssertionError("the service never listened on port %d" % self.port)
 
     def __exit__(self, *exc):
@@ -550,6 +718,9 @@ class Service:
                 self.proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+        if self.proc and self.proc.stderr:
+            self.proc.stderr.close()
+        purge_service_state()
         if self.root and os.path.isdir(self.root):
             shutil.rmtree(self.root, ignore_errors=True)
         return False
@@ -565,7 +736,7 @@ class Service:
             conn.close()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def service():
     assert os.path.isfile(ARTIFACT), "%s is missing from the collected artifacts" % ARTIFACT
     with Service() as running:
@@ -588,6 +759,7 @@ SEEDS = [3, 17, 41]
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_response_has_exactly_the_three_lists(service, seed):
+    """Only items, events and log_excerpts, one entry per bundle entry, with exactly the stated fields."""
     bundle, _ = generate(seed)
     case, _ = ok(service, bundle)
     assert isinstance(case, dict) and set(case) == {"items", "events", "log_excerpts"}, (
@@ -613,6 +785,7 @@ def test_response_has_exactly_the_three_lists(service, seed):
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_lists_keep_bundle_order_and_copy_identifying_fields(service, seed):
+    """The fields that are never changed come back unchanged and in bundle order."""
     bundle, _ = generate(seed)
     case, _ = ok(service, bundle)
     evidence = bundle["evidence"]
@@ -633,39 +806,16 @@ def test_lists_keep_bundle_order_and_copy_identifying_fields(service, seed):
 # ---------------------------------------------------------------------------
 
 
-CREDENTIAL_LABELS = {"env secret", "bearer token", "vault token", "base64 secret", "service account"}
-LEAK_GROUPS = ["declared identifiers", "node names", "hostnames", "addresses",
-               "reverse-DNS names of cluster addresses", "reverse-DNS names of node addresses",
-               "MAC addresses", "credentials and accounts"]
+def response_text(service_, bundle, truth):
+    """(every string of the response, what its data-URL payloads decode to).
 
-
-def group_of(label):
-    """Which class of sensitive value a planted label belongs to."""
-    if " inside a " in label:
-        return "payload contents"
-    if "reverse-DNS" in label:
-        return "reverse-DNS names of %s addresses" % ("node" if "node address" in label else "cluster")
-    if label.startswith(("node address", "undeclared address", "address with a port", "network address",
-                         "low end", "high end")):
-        return "addresses"
-    if label.startswith(("mac ", "undeclared mac")):
-        return "MAC addresses"
-    if label.startswith(("node ", "unlisted node")):
-        return "node names"
-    if label.startswith(("service dns host", "internal host", "host label", "dns suffix")):
-        return "hostnames"
-    if label in CREDENTIAL_LABELS:
-        return "credentials and accounts"
-    return "declared identifiers"
-
-
-def response_text(service_, bundle):
-    """(every string of the response, what its data-URL payloads decode to)."""
+    The one planted public hostname that contains an internal suffix part-way
+    through is taken out first, so the suffix check is not tripped by it."""
     _, body = ok(service_, bundle)
     case = json.loads(body)
     plain = "\n".join(
         str(v) for key in ("items", "events", "log_excerpts") for entry in case[key] for v in entry.values()
-    )
+    ).replace(truth.info["lookalike"], "")
     return plain, expanded(plain)[len(plain):]
 
 
@@ -675,9 +825,8 @@ def test_no_sensitive_value_survives(service, group):
     leaked = {}
     for seed in SEEDS:
         bundle, truth = generate(seed)
-        plain, _ = response_text(service, bundle)
-        found = sorted(label for label, value in truth["sensitive"].items()
-                       if group_of(label) == group and value in plain)
+        plain, _ = response_text(service, bundle, truth)
+        found = sorted(label for g, label, value in truth.leaks if g == group and value in plain)
         if found:
             leaked[seed] = found
     assert not leaked, "%s reached the summary (by seed): %r" % (group, leaked)
@@ -688,8 +837,8 @@ def test_no_sensitive_value_survives_inside_payloads(service):
     leaked = {}
     for seed in SEEDS:
         bundle, truth = generate(seed)
-        _, inside = response_text(service, bundle)
-        found = sorted(label for label, value in truth["sensitive"].items() if value in inside)
+        _, inside = response_text(service, bundle, truth)
+        found = sorted(label for _, label, value in truth.leaks if value in inside)
         if found:
             leaked[seed] = found
     assert not leaked, "these are still inside data-URL payloads (by seed): %r" % leaked
@@ -697,14 +846,62 @@ def test_no_sensitive_value_survives_inside_payloads(service):
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_everything_else_survives(service, seed):
+    """Every planted non-sensitive value is still there, in plain text or inside a payload."""
     bundle, truth = generate(seed)
     _, body = ok(service, bundle)
     case = json.loads(body)
     text = expanded("\n".join(
         str(v) for key in ("items", "events", "log_excerpts") for entry in case[key] for v in entry.values()
     ))
-    missing = sorted(label for label, value in truth["preserved"].items() if value not in text)
+    missing = sorted(label for label, value in truth.preserved.items() if value not in text)
     assert not missing, "seed %d: redaction destroyed %r" % (seed, missing)
+
+
+def surrounding_text_kept(original, returned, spans):
+    """True when `returned` is `original` with nothing changed except at the
+    planted sensitive strings: every stretch of text between them is present,
+    unchanged and in order, with something standing where each one was.
+
+    Payloads are compared by what they decode to. No placeholder syntax is
+    assumed, and a sensitive string that was left in place still fits; the
+    leak tests deal with that."""
+    masked = unfolded(original)
+    for value in sorted(spans, key=lambda v: (-len(v), v)):
+        masked = masked.replace(value, "\x00")
+    pattern = "(?:.+?)".join(re.escape(part) for part in re.split("\x00+", masked))
+    return re.fullmatch(pattern, unfolded(returned)) is not None
+
+
+FIELD_CLASSES = ["item names and nodes", "event messages", "log lines", "log lines carrying payloads"]
+
+
+@pytest.mark.parametrize("field_class", FIELD_CLASSES)
+def test_only_sensitive_values_change(service, field_class):
+    """Each returned field is its original with only the sensitive values replaced:
+    the wording, spacing and punctuation around them are exactly as they were,
+    entry by entry in bundle order."""
+    wrong = []
+    for seed in SEEDS:
+        bundle, truth = generate(seed)
+        case, _ = ok(service, bundle)
+        evidence = bundle["evidence"]
+        pairs = []
+        if field_class == "item names and nodes":
+            for src, out in zip(evidence["resources"], case["items"]):
+                pairs += [(src["name"], out.get("name")), (src["node"], out.get("node"))]
+        elif field_class == "event messages":
+            pairs = [(src["message"], out.get("message")) for src, out in zip(evidence["events"], case["events"])]
+        else:
+            carrying = field_class == "log lines carrying payloads"
+            pairs = [(src["line"], out.get("line"))
+                     for src, out in zip(evidence["log_excerpts"], case["log_excerpts"])
+                     if bool(DATA_URL.search(src["line"])) == carrying]
+        assert pairs, "nothing to compare for %s" % field_class
+        for original, returned in pairs:
+            if not isinstance(returned, str) or not surrounding_text_kept(original, returned, truth.spans):
+                shown = returned if not isinstance(returned, str) else returned[:160]
+                wrong.append("seed %d: %r came back as %r" % (seed, original[:160], shown))
+    assert not wrong, "%s changed beyond their sensitive values:\n%s" % (field_class, "\n".join(wrong[:6]))
 
 
 def probe_lines(case, prefix):
@@ -718,18 +915,27 @@ def test_placeholders_are_consistent_and_injective(service):
     no assumption is made about placeholder syntax.
     """
     bundle, truth = generate(11)
-    s = truth["sensitive"]
+    info = truth.info
     probes = {
-        "host": s["internal host"],
-        "addr": truth["node_ips"][1],
-        "addr2": truth["stray_ips"][3],
-        "node-addr": truth["node_ips"][0],
-        "mac": truth["node_macs"][0],
-        "acct": s["collected_by account"],
-        "unlisted": s["unlisted node"],
-        "sa": s["service account"],
-        "vault": s["vault token"],
+        "host": info["hosts"][0],
+        "addr": info["node_ips"][1],
+        "addr2": info["stray_ips"][6],
+        "node-addr": info["node_ips"][0],
+        "mac": info["node_macs"][0],
+        "acct": info["collected_by"],
+        "unlisted": info["unlisted"],
+        "node-short": info["node_names"][0][0],
+        "node-fqdn": info["node_names"][0][1],
+        "sa": info["service_account"],
+        "vault": info["vault"],
+        "pull-secret": info["pull_secret"],
+        "cluster": bundle["cluster"]["name"],
+        "infra": bundle["cluster"]["infra_id"],
+        "bundle": bundle["bundle_id"],
+        "submitter": bundle["submitted_by"],
     }
+    for name, value in info["env_secrets"].items():
+        probes["env-%s" % name] = value
     excerpts = bundle["evidence"]["log_excerpts"]
     for key, value in probes.items():
         excerpts.append({"source": "p-%s-1" % key, "line": value})
@@ -743,31 +949,50 @@ def test_placeholders_are_consistent_and_injective(service):
         assert first is not None and second is not None, "probe log excerpts must be reported (%s)" % key
         assert first == second, "%s produced two different placeholders: %r vs %r" % (key, first, second)
         assert probes[key] not in first, "%s: placeholder still contains the value" % key
+        value = probes[key]
+        assert first[:4] != value[:4] and first[-4:] != value[-4:], (
+            "%s: only part of the value was replaced: %r" % (key, first)
+        )
         assert first not in seen, "%s and %s collapsed onto the same placeholder %r" % (key, seen[first], first)
         seen[first] = key
 
 
 def test_same_value_maps_identically_in_different_fields(service):
-    """A value appearing in an event and in a log line gets one placeholder."""
+    """A value gets one placeholder whether it is in an item, an event or a log line."""
     bundle, truth = generate(13)
-    host = truth["sensitive"]["internal host"]
-    bundle["evidence"]["events"].append(
-        {"event_id": "EV-probe", "reason": "Probing", "namespace": "probes", "count": 1, "message": host}
+    info = truth.info
+    short, fqdn = info["node_names"][0]
+    word = "probe%s" % short[:2]
+    bundle["evidence"]["resources"].append(
+        {"resource_id": "RES-probe", "kind": "Pod", "namespace": "probes", "name": "%s-%s" % (word, short),
+         "condition": "PodPending", "node": fqdn, "replicas": None, "spec": {"containers": []}}
     )
-    bundle["evidence"]["log_excerpts"].append({"source": "p-cross", "line": host})
+    bundle["evidence"]["events"].append(
+        {"event_id": "EV-probe", "reason": "Probing", "namespace": "probes", "count": 1, "message": fqdn}
+    )
+    bundle["evidence"]["log_excerpts"] += [{"source": "p-fqdn", "line": fqdn}, {"source": "p-short", "line": short}]
     case, _ = ok(service, bundle)
+    item = [i for i in case["items"] if i["resource_id"] == "RES-probe"][0]
     event = [e for e in case["events"] if e["event_id"] == "EV-probe"][0]
-    line = probe_lines(case, "p-cross")["p-cross"]
-    assert event["message"] == line, (
-        "the same host became %r in an event and %r in a log excerpt" % (event["message"], line)
+    lines = probe_lines(case, "p-")
+    assert fqdn not in lines["p-fqdn"] and short not in lines["p-short"], "node names were not replaced"
+    assert event["message"] == lines["p-fqdn"], (
+        "the same host became %r in an event and %r in a log excerpt" % (event["message"], lines["p-fqdn"])
+    )
+    assert item["node"] == lines["p-fqdn"], (
+        "the same host became %r in an item's node and %r in a log excerpt" % (item["node"], lines["p-fqdn"])
+    )
+    assert item["name"] == "%s-%s" % (word, lines["p-short"]), (
+        "an item name must keep its own text and use the node's placeholder: got %r, want %r"
+        % (item["name"], "%s-%s" % (word, lines["p-short"]))
     )
 
 
 def test_hostname_case_does_not_matter(service):
     """DNS names are the same name in any case, so they share a placeholder."""
     bundle, truth = generate(19)
-    fqdn = [v for k, v in truth["sensitive"].items() if k.startswith("node fqdn ")][0]
-    host = truth["sensitive"]["internal host"]
+    fqdn = truth.info["node_names"][0][1]
+    host = truth.info["hosts"][0]
     excerpts = bundle["evidence"]["log_excerpts"]
     for key, value in (("fqdn", fqdn), ("host", host)):
         excerpts.append({"source": "c-%s-lower" % key, "line": "peer %s ok" % value})
@@ -778,6 +1003,53 @@ def test_hostname_case_does_not_matter(service):
         lower, upper = lines["c-%s-lower" % key], lines["c-%s-upper" % key]
         assert value not in lower and value.upper() not in upper, "%s was not replaced in both cases" % value
         assert lower == upper, "%s in upper case became %r but %r in lower case" % (value, upper, lower)
+
+
+def test_mac_case_does_not_matter(service):
+    """A MAC address is the same address in upper or lower case, so it has one placeholder."""
+    bundle, truth = generate(43)
+    excerpts = bundle["evidence"]["log_excerpts"]
+    macs = {"node": truth.info["node_macs"][0], "stray": truth.info["stray_mac"]}
+    for key, value in macs.items():
+        excerpts.append({"source": "m-%s-lower" % key, "line": "peer %s ok" % value})
+        excerpts.append({"source": "m-%s-upper" % key, "line": "peer %s ok" % value.upper()})
+    case, _ = ok(service, bundle)
+    lines = probe_lines(case, "m-")
+    for key, value in macs.items():
+        lower, upper = lines["m-%s-lower" % key], lines["m-%s-upper" % key]
+        assert value not in lower and value.upper() not in upper, "%s was not replaced in both cases" % value
+        assert lower == upper, "%s in upper case became %r but %r in lower case" % (value, upper, lower)
+
+
+def test_token_after_bearer_is_the_same_token(service):
+    """What follows "Bearer" is replaced up to the end of the token and no
+    further, and a token that also appears on its own keeps one placeholder."""
+    bundle, truth = generate(47)
+    vault, bearer = truth.info["vault"], truth.info["bearer"]
+    excerpts = bundle["evidence"]["log_excerpts"]
+    excerpts += [
+        {"source": "b-vault-plain", "line": "peer %s ok" % vault},
+        {"source": "b-vault-bearer", "line": "Authorization: Bearer %s; retrying" % vault},
+        {"source": "b-bearer-1", "line": "Authorization: Bearer %s; retrying" % bearer},
+        {"source": "b-bearer-2", "line": "sent Bearer %s, refused" % bearer},
+    ]
+    case, _ = ok(service, bundle)
+    lines = probe_lines(case, "b-")
+    token = placeholder_in(lines["b-vault-plain"], "a vault token")
+    assert token and vault not in token, "the vault token was not replaced: %r" % lines["b-vault-plain"]
+    assert lines["b-vault-bearer"] == "Authorization: Bearer %s; retrying" % token, (
+        "a vault token after Bearer must take the placeholder it has on its own, with the text "
+        "after it untouched: got %r" % lines["b-vault-bearer"]
+    )
+    first, second = lines["b-bearer-1"], lines["b-bearer-2"]
+    head_1, tail_1, head_2, tail_2 = "Authorization: Bearer ", "; retrying", "sent Bearer ", ", refused"
+    assert first.startswith(head_1) and first.endswith(tail_1) and second.startswith(head_2) and second.endswith(tail_2), (
+        "text around a bearer token must be left as it was: got %r and %r" % (first, second)
+    )
+    got_1, got_2 = first[len(head_1):-len(tail_1)], second[len(head_2):-len(tail_2)]
+    assert got_1 and bearer not in first + second, "the bearer token was not replaced: %r" % first
+    assert got_1 == got_2, "one bearer token became %r and %r" % (got_1, got_2)
+    assert got_1 != token, "two different tokens share the placeholder %r" % token
 
 
 def placeholder_in(line, label):
@@ -793,9 +1065,10 @@ def test_address_forms_share_the_plain_placeholder(service, seed):
     """A port, a prefix length, a range hyphen or .in-addr.arpa stays; the
     address inside is replaced by the placeholder it gets when written plainly."""
     bundle, truth = generate(seed)
-    port_addr, ptr_addr, subnet = truth["port_addr"], truth["ptr_addr"], truth["subnet"]
-    node_addr = truth["node_ips"][0]
-    lo, hi = truth["range"]
+    info = truth.info
+    port_addr, ptr_addr, subnet = info["port_addr"], info["ptr_addr"], info["subnet"]
+    node_addr = info["node_ips"][0]
+    lo, hi = info["range"]
     plain = {"port": port_addr, "ptr": ptr_addr, "node": node_addr, "subnet": subnet, "lo": lo, "hi": hi}
     forms = {
         "cluster address with a port": ("%s:6443" % port_addr, "{port}:6443"),
@@ -848,8 +1121,9 @@ def test_payloads_are_sanitized_in_place(service, seed):
     the placeholders the same values get in plain text, and the payload comes
     back in the encoding it arrived in."""
     bundle, truth = generate(seed)
-    addr, node_addr, ptr_addr = truth["port_addr"], truth["node_ips"][0], truth["ptr_addr"]
-    mac = truth["node_macs"][0]
+    info = truth.info
+    addr, node_addr, ptr_addr = info["port_addr"], info["node_ips"][0], info["ptr_addr"]
+    mac = info["node_macs"][0]
     plain = {"addr": addr, "node": node_addr, "ptr": ptr_addr, "mac": mac}
     rng = random.Random("payload-probe:%d" % seed)
     words = [_w(rng, 10) for _ in range(4)]
@@ -935,6 +1209,7 @@ def reordered(value):
 
 
 def test_repeat_is_byte_identical(service):
+    """The same bundle sent twice to one process gives the same bytes."""
     bundle, _ = generate(23)
     _, first = ok(service, bundle)
     time.sleep(CLOCK_STEP)
@@ -943,6 +1218,7 @@ def test_repeat_is_byte_identical(service):
 
 
 def test_key_order_does_not_matter(service):
+    """The same bundle with its keys reordered gives the same bytes."""
     bundle, _ = generate(29)
     _, plain = ok(service, bundle)
     time.sleep(CLOCK_STEP)
@@ -950,22 +1226,28 @@ def test_key_order_does_not_matter(service):
     assert plain == shuffled, "reordering keys changed the response"
 
 
-def test_fresh_process_agrees(service):
+def test_restart_reproduces_the_response():
+    """A second, separately started service gives the same bytes as the first.
+
+    The first one is stopped and everything its account left behind is removed
+    before the second starts, so the second has to compute the response."""
     bundle, _ = generate(31)
-    _, first = ok(service, bundle)
+    with Service() as first_run:
+        _, first = ok(first_run, bundle)
     time.sleep(CLOCK_STEP)
-    with Service(hashseed="12345") as other:
-        _, second = ok(other, bundle)
+    with Service() as second_run:
+        _, second = ok(second_run, bundle)
     assert first == second, "a restarted service produced a different response"
 
 
-def test_fresh_process_agrees_on_reordered_input(service):
-    """A restarted service receiving the reordered bundle first must agree."""
+def test_restart_reproduces_the_response_for_reordered_input():
+    """A restarted service given the reordered bundle first must still agree."""
     bundle, _ = generate(37)
-    _, first = ok(service, bundle)
+    with Service() as first_run:
+        _, first = ok(first_run, bundle)
     time.sleep(CLOCK_STEP)
-    with Service(hashseed="999") as other:
-        _, second = ok(other, reordered(bundle))
+    with Service() as second_run:
+        _, second = ok(second_run, reordered(bundle))
     assert first == second, "reordered input to a restarted service produced different bytes"
 
 
@@ -975,6 +1257,7 @@ def test_fresh_process_agrees_on_reordered_input(service):
 
 
 def test_service_user_cannot_read_verifier_assets():
+    """The account the service runs as cannot open the verifier's test file."""
     if os.geteuid() != 0 or service_uid() is None:
         pytest.skip("privilege separation only applies in the verifier image")
     probe = subprocess.run(
@@ -986,12 +1269,36 @@ def test_service_user_cannot_read_verifier_assets():
 
 
 def test_third_party_packages_are_not_importable():
-    """The submitted service must run on the standard library alone."""
-    probe = subprocess.run(
-        [sys.executable, "-I", "-S", "-c", "import pytest"],
-        capture_output=True,
-        env={"PATH": "/usr/local/bin:/usr/bin:/bin"},
+    """The submitted service has the standard library and nothing else: the
+    verifier's own packages cannot be imported by the account it runs as, in
+    the mode it is started in or in any other, even with every directory on
+    the verifier's module path added to its own."""
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin"}
+    kwargs = {}
+    if os.geteuid() == 0 and service_uid() is not None:
+        kwargs["user"] = SERVICE_USER
+    plain = subprocess.run([sys.executable, "-I", "-S", "-c", "import pytest"], capture_output=True, env=env, **kwargs)
+    assert plain.returncode != 0, "third-party packages are importable by submitted code"
+    if not kwargs:
+        pytest.skip("the directory-permission check only applies in the verifier image")
+    reach = (
+        "import sys\n"
+        "sys.path[:0] = %r\n"
+        "found = []\n"
+        "for name in %r:\n"
+        "    try:\n"
+        "        __import__(name)\n"
+        "        found.append(name)\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "sys.exit(1 if found else 0)\n" % ([p for p in sys.path if p], ["pytest", "_pytest", "pluggy", "iniconfig", "pip"])
     )
-    assert probe.returncode != 0, (
-        "third-party packages are importable by submitted code; the service must be run isolated"
-    )
+    for flags in (["-I", "-S"], ["-I"], []):
+        probe = subprocess.run([sys.executable] + flags + ["-c", reach], capture_output=True, env=env, cwd="/", **kwargs)
+        assert probe.returncode == 0, (
+            "submitted code can import the verifier's packages by adding their directory to its path "
+            "(interpreter flags %r)" % (flags,)
+        )
+    readable = subprocess.run([sys.executable, "-I", "-S", "-c", "open(%r).read()" % pytest.__file__],
+                              capture_output=True, env=env, **kwargs)
+    assert readable.returncode != 0, "the service account can read the verifier's packages"
