@@ -170,6 +170,10 @@
         "line": "2026-09-14T06:09:40Z I: node subnet 10.128.4.0/23 allocated from cluster network 10.128.0.0/14; service network 172.30.0.0/16; egress to 151.101.0.0/16 allowed; partner network 10.132.0.0/16 reached via 172.31.0.4"
       },
       {
+        "source": "machine-config-daemon",
+        "line": "2026-09-14T06:08:55Z I: writing file /etc/kubernetes/kubelet-ca.json contents data:application/json;base64,eyJhcGlWZXJzaW9uIjoidjEiLCJraW5kIjoiQ29uZmlnTWFwIiwiZGF0YSI6eyJyb3RhdGlvbiI6IjMwZCIsImlzc3VlciI6Imt1YmVsZXQtc2lnbmVyIn19 mode 0644"
+      },
+      {
         "source": "cluster-version-operator",
         "line": "2026-09-14T06:10:02Z I: Retrieving payload quay.io/openshift-release-dev/ocp-release@sha256:34d634a0c5483692c78ecc3ab48eacb237a8fa36071b2b192b04fc155c48b37d mirrored to registry-dr.mesa.internal:8443/openshift-release-dev/ocp-release"
       },
@@ -184,6 +188,14 @@
       {
         "source": "etcd",
         "line": "2026-09-14T06:12:40Z I | embed: serving client requests on 127.0.0.1:2379 and 10.44.2.12:2379 using /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer.key"
+      },
+      {
+        "source": "kube-rbac-proxy",
+        "line": "2026-09-14T06:12:41Z E: GET /metrics Authorization: Bearer Xk4mQ9pL2 -> 401 Unauthorized"
+      },
+      {
+        "source": "prometheus",
+        "line": "2026-09-14T06:12:42Z W: scrape client Xk4mQ9pL2 backing off for 30s"
       },
       {
         "source": "etcd",

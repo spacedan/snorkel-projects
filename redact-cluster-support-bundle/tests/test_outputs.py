@@ -52,13 +52,21 @@ CLUSTER_PREFIXES = ["10.21", "10.44", "10.128", "10.129", "10.130", "10.131", "1
 NEIGHBOUR_PREFIXES = ["10.20", "10.22", "10.43", "10.45", "10.127", "10.132", "172.29", "172.31"]
 PUBLIC_PREFIXES = ["151.101", "104.18", "23.215"]
 # One env-var name per configured hint, each containing that hint and no other.
-SECRET_ENV_NAMES = ["DB_PASS", "APP_SECRET", "API_TOKEN", "AWS_CREDENTIALS", "REGISTRY_AUTH", "SESSION_KEY"]
+SECRET_ENV_HINTS = ["PASS", "SECRET", "TOKEN", "CRED", "AUTH", "KEY"]
+ENV_PREFIXES = ["DB", "APP", "SVC", "LDAP", "SMTP", "REDIS", "KAFKA", "S3", "GRAFANA", "MINIO", "PG", "ETCD",
+                "HARBOR", "JENKINS", "BACKUP", "METRICS"]
+ENV_TAILS = ["", "S", "WORD", "_V2", "_PRIMARY", "_RW", "PHRASE", "_ID"]
 CONDITIONS = ["EtcdMembersDegraded", "APIServerUnavailable", "NodeNotReady", "CrashLoopBackOff",
               "FailedMount", "ImagePullBackOff", "PodPending"]
 
 ITEM_KEYS = {"resource_id", "kind", "namespace", "name", "condition", "node"}
 EVENT_KEYS = {"event_id", "reason", "namespace", "message"}
 LOG_KEYS = {"source", "line"}
+
+RANGE_ENDS = ["10.21.0.0", "10.21.255.255", "10.44.0.0", "10.44.255.255", "10.128.0.0", "10.131.255.255",
+              "172.30.0.0", "172.30.255.255", "127.0.0.0", "127.255.255.255"]
+OUTSIDE_RANGE_ENDS = ["10.20.255.255", "10.22.0.0", "10.43.255.255", "10.45.0.0", "10.127.255.255", "10.132.0.0",
+                      "172.29.255.255", "172.31.0.0", "126.255.255.255", "128.0.0.0"]
 
 LEAK_GROUPS = ["declared identifiers", "node names", "hostnames", "addresses",
                "reverse-DNS names of cluster addresses", "reverse-DNS names of node addresses",
@@ -84,6 +92,15 @@ def _hex(rng, n):
 
 def _mac(rng):
     return ":".join("%02x" % rng.randrange(256) for _ in range(6))
+
+
+def secret_env_name(rng, hint, prefix):
+    """An env-var name that contains `hint` somewhere: as a suffix, inside a
+    longer word, or at the front."""
+    tail = rng.choice(ENV_TAILS)
+    if rng.random() < 0.3:
+        return "%s%s_%s" % (hint, tail, prefix)
+    return "%s_%s%s" % (prefix, hint, tail)
 
 
 def reverse_name(address):
@@ -171,23 +188,6 @@ def unfolded(text):
     return DATA_URL.sub(swap, text)
 
 
-QUAD = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}")
-
-
-def pieces(value):
-    """The parts of a sensitive value that a partial replacement would leave
-    behind: three octets of an address, or the ends and halves of anything else."""
-    if QUAD.fullmatch(value):
-        octets = value.split(".")
-        return [".".join(octets[:3]) + ".", "." + ".".join(octets[1:])]
-    found = []
-    if len(value) >= 8:
-        found += [value[:6], value[-6:]]
-    if len(value) >= 12:
-        found += [value[: len(value) // 2], value[len(value) // 2:]]
-    return sorted(set(found))
-
-
 class Truth:
     """What the generator planted."""
 
@@ -201,33 +201,12 @@ class Truth:
         self.leaks.append((group, label, value))
         self.spans.add(value)
 
-    def add_partial_leaks(self, carried):
-        """Replacing only part of a value still gives the rest away. A piece
-        that also occurs in the text around the planted values is left out, so
-        nothing that legitimately stays can be mistaken for a leak."""
-        rest = "\n".join(unfolded(text) for text in carried)
-        for value in sorted(self.spans, key=lambda v: (-len(v), v)):
-            rest = rest.replace(value, "\x00")
-        for group, label, value in list(self.leaks):
-            if value not in self.spans:
-                continue
-            for piece in pieces(value):
-                if piece not in rest:
-                    self.leaks.append((group, "part of the %s" % label, piece))
-
     def keep(self, label, value):
         self.preserved[label] = value
 
 
-def generate(seed, nonce=0):
-    """Build a fresh bundle; retried with a new nonce in the rare case a
-    planted payload happens to look like one of the credential forms."""
-    bundle, truth = _generate(seed, nonce)
-    for url in truth.info["payload_urls"]:
-        body = url.split(",", 1)[1]
-        if body.startswith("eyJ") or re.search(r"[+/]eyJ|hvs\.", body):
-            return generate(seed, nonce + 1)
-    return bundle, truth
+def generate(seed):
+    return _generate(seed)
 
 
 def _generate(seed, nonce=0):
@@ -238,14 +217,14 @@ def _generate(seed, nonce=0):
     incidentally catch it; every preserved class likewise.
     """
     rng = random.Random("bundle:%d:%d" % (seed, nonce))
+    more = random.Random("bundle-extra:%d" % seed)
     addrs = Addresses(rng)
     t = Truth()
 
     cluster_name = "%s-%s" % (_w(rng, 4), _w(rng, 5))
     domain = _w(rng, 6)
     node_prefix = "%s-%s" % (_w(rng, 4), _w(rng, 4)) if (seed // 2) % 2 else _w(rng, 5)
-    infra_tail = _alnum(rng, 7)
-    infra_id = "%s-%s" % (cluster_name, infra_tail)
+    infra_id = "%s-%s" % (cluster_name, _alnum(rng, 7))
     api_url = "https://api.%s.mesa.internal:6443" % cluster_name
     # A mirror host deliberately not under an internal suffix: only the
     # declared cluster.mirror_registry value makes it sensitive.
@@ -258,7 +237,6 @@ def _generate(seed, nonce=0):
                          ("mirror registry", mirror), ("collected_by account", collected_by),
                          ("submitted_by account", submitted_by), ("bundle id", bundle_id)):
         t.sensitive("declared identifiers", label, value)
-    t.leaks.append(("declared identifiers", "the part of the infra id after the cluster name", "-" + infra_tail))
 
     node_names, node_ips, node_macs, nodes = [], [], [], []
     for index in range(rng.randrange(2, 5)):
@@ -297,10 +275,13 @@ def _generate(seed, nonce=0):
     reasons = ["%s%s" % (_w(rng, 4).capitalize(), _w(rng, 5).capitalize()) for _ in range(3)]
     key_path = "/etc/%s/%s.pem" % (_w(rng, 5), _w(rng, 6))
     region = "zone-%s" % _w(rng, 6)
+    prefixes = more.sample(ENV_PREFIXES, len(ENV_PREFIXES))
+    first_names = [secret_env_name(more, hint, prefixes[i]) for i, hint in enumerate(SECRET_ENV_HINTS)]
     resources = []
     for index in range(rng.randrange(4, 8)):
         short, fqdn = node_names[index % len(node_names)]
-        names = SECRET_ENV_NAMES if index == 0 else [SECRET_ENV_NAMES[(seed + index) % len(SECRET_ENV_NAMES)]]
+        names = first_names if index == 0 else [
+            secret_env_name(more, SECRET_ENV_HINTS[(seed + index) % 6], prefixes[6 + index % 10])]
         resources.append(
             {
                 "resource_id": "RES-%s" % _alnum(rng, 6),
@@ -327,7 +308,27 @@ def _generate(seed, nonce=0):
                 },
             }
         )
+    # A sidecar container carries a credential of its own.
+    sidecar_var = secret_env_name(more, SECRET_ENV_HINTS[(seed + 3) % 6], "SIDECAR")
+    sidecar_secret = _alnum(more, 18)
+    resources[2]["spec"]["containers"].append(
+        {
+            "name": "sidecar-%s" % _w(more, 4),
+            "image": "%s/%s/%s@sha256:%s" % (UPSTREAM[seed % len(UPSTREAM)], _w(more, 5), _w(more, 5), _hex(more, 64)),
+            "env": [{"name": sidecar_var, "value": sidecar_secret}, {"name": "LOG_FORMAT", "value": "json"}],
+        }
+    )
+    t.sensitive("credentials and accounts", "value of env var %s in a second container" % sidecar_var, sidecar_secret)
     env_secrets = {var["name"]: var["value"] for var in resources[0]["spec"]["containers"][0]["env"][:6]}
+    # A credential-named variable whose value is only a path stays.
+    mounted_var = secret_env_name(more, SECRET_ENV_HINTS[seed % 6], "MOUNTED") + "_PATH"
+    mounted_path = "/var/run/secrets/%s/%s" % (_w(more, 6), _w(more, 5))
+    resources[0]["spec"]["containers"][0]["env"].append({"name": mounted_var, "value": mounted_path})
+    t.keep("path value of the credential-named variable %s" % mounted_var, mounted_path)
+    # A resource whose name has nothing sensitive in it keeps that name exactly.
+    plain_name = "%s-%s-%s" % (_w(more, 6), _w(more, 4), "".join(more.choice("abcdefghjkmnpqrstvwxz2456789") for _ in range(5)))
+    resources[3]["name"] = plain_name
+    t.keep("resource name with nothing sensitive in it", plain_name)
     env_secret_2 = resources[1]["spec"]["containers"][0]["env"][0]["value"]
     for name, value in env_secrets.items():
         t.sensitive("credentials and accounts", "value of env var %s" % name, value)
@@ -350,8 +351,6 @@ def _generate(seed, nonce=0):
     ]
     for host, suffix in zip(hosts, SUFFIXES):
         t.sensitive("hostnames", "host under %s" % suffix, host)
-        t.leaks.append(("hostnames", "first label of the host under %s" % suffix, host.split(".")[0]))
-        t.leaks.append(("hostnames", "suffix %s left behind" % suffix, suffix))
     # A public name that only contains a suffix part-way through is not internal.
     lookalike = "%s.cluster.local.%s.example.org" % (_w(rng, 6), _w(rng, 5))
 
@@ -462,6 +461,30 @@ def _generate(seed, nonce=0):
     for prefix, ip in zip(CLUSTER_PREFIXES, stray_ips):
         t.sensitive("addresses", "undeclared address in %s" % prefix, ip)
         excerpts.append({"source": "stray-ip", "line": "peer %s answered" % ip})
+    # The first and last address of every configured range, and the addresses
+    # just outside each one.
+    for ip in RANGE_ENDS:
+        t.sensitive("addresses", "range end %s" % ip, ip)
+        excerpts.append({"source": "range-end", "line": "peer %s answered" % ip})
+    for ip in OUTSIDE_RANGE_ENDS:
+        t.keep("address just outside a configured range (%s)" % ip, "route via %s up" % ip)
+        excerpts.append({"source": "outside-range", "line": "route via %s up" % ip})
+    excerpts.append({"source": "sidecar", "line": "sidecar login failed with %s; retried with %s" % (sidecar_secret, sidecar_secret)})
+    excerpts.append({"source": "kubelet", "line": "secret volume mounted at %s" % mounted_path})
+    # Credentials and accounts also turn up in event messages.
+    first_secret = list(env_secrets.values())[0]
+    events.append({"event_id": "EV-%s" % _alnum(more, 5), "reason": "FailedLogin", "namespace": namespaces[0],
+                   "count": more.randrange(1, 900),
+                   "message": "login rejected for %s using %s; caller %s" % (sidecar_secret, first_secret, service_account)})
+    events.append({"event_id": "EV-%s" % _alnum(more, 5), "reason": "TokenRevoked", "namespace": namespaces[2],
+                   "count": more.randrange(1, 900),
+                   "message": "token %s revoked after 3 failures by %s" % (bearer, collected_by)})
+    excerpts.append({"source": "token-cache", "line": "cache entry %s evicted after 300s" % bearer})
+
+    # A Vault token that is never sent in a header.
+    vault_2 = "hvs.%s" % _alnum(more, 20)
+    t.sensitive("credentials and accounts", "vault token outside any header", vault_2)
+    excerpts.append({"source": "vault-agent", "line": "lease renewal for %s failed, retrying" % vault_2})
     registry_refs = {}
     for index, host in enumerate(UPSTREAM):
         ref = "%s/%s/%s@sha256:%s" % (host, _w(rng, 5), _w(rng, 5), _hex(rng, 64))
@@ -496,11 +519,15 @@ def _generate(seed, nonce=0):
     clean_gz = data_url("# managed\npool %s.pool.ntp.org iburst\nmakestep 1.0 3\n" % _w(rng, 6),
                         gz=(1, 1700000000 + rng.randrange(10 ** 7)))
     clean_text = data_url("[Unit]\nDescription=%s\nAfter=network-online.target\n" % _w(rng, 8))
+    # JSON always encodes to base64 starting "eyJ", like a pull secret.
+    clean_json = data_url('{"apiVersion":"v1","kind":"%s","data":{"note":"%s"}}' % (_w(more, 8).capitalize(), _w(more, 10)),
+                          header="data:application/json;base64,")
     binary = "data:application/octet-stream;base64," + b64enc(
         b"\x89PNG\r\n\x1a\n\xff\xfe" + bytes(rng.randrange(128, 256) for _ in range(48))
     )
     for path, url in (("registries.conf", registries), ("chrony.conf", chrony), ("ignition", ignition),
-                      ("chrony.d/pool.conf", clean_gz), ("systemd/unit", clean_text), ("logo.png", binary)):
+                      ("chrony.d/pool.conf", clean_gz), ("systemd/unit", clean_text), ("logo.png", binary),
+                      ("kubernetes/ca-bundle.json", clean_json)):
         excerpts.append({"source": "machine-config-daemon",
                          "line": "writing file /etc/%s contents %s mode 0644" % (path, url)})
     for label, value in (("address inside a gzipped payload", payload_addr),
@@ -539,6 +566,7 @@ def _generate(seed, nonce=0):
         ("gzipped payload with nothing sensitive (byte for byte)", clean_gz),
         ("text payload with nothing sensitive (byte for byte)", clean_text),
         ("non-text payload (byte for byte)", binary),
+        ("JSON payload with nothing sensitive (byte for byte)", clean_json),
     ):
         t.keep(label, value)
     for prefix, ip in zip(NEIGHBOUR_PREFIXES, neighbours):
@@ -548,18 +576,14 @@ def _generate(seed, nonce=0):
     for index, word in enumerate(keep):
         t.keep("non-sensitive text %d inside a sanitized payload" % index, word)
 
-    t.add_partial_leaks(
-        [text for res in resources for text in (res["name"], res["node"])]
-        + [event["message"] for event in events]
-        + [excerpt["line"] for excerpt in excerpts]
-    )
     t.info = {
         "node_names": node_names, "node_ips": node_ips, "node_macs": node_macs, "unlisted": unlisted,
         "hosts": hosts, "lookalike": lookalike, "port_addr": port_addr, "ptr_addr": ptr_addr,
         "subnet": subnet, "range": (range_lo, range_hi), "stray_ips": stray_ips, "stray_mac": stray_mac,
         "collected_by": collected_by, "service_account": service_account, "vault": vault, "bearer": bearer,
         "pull_secret": pull_secret, "env_secrets": env_secrets,
-        "payload_urls": [registries, chrony, ignition, inner, clean_gz, clean_text, binary],
+        "payload_urls": [registries, chrony, ignition, inner, clean_gz, clean_text, binary, clean_json],
+        "api_url": api_url, "mirror": mirror,
     }
     return bundle, t
 
@@ -809,13 +833,14 @@ def test_lists_keep_bundle_order_and_copy_identifying_fields(service, seed):
 def response_text(service_, bundle, truth):
     """(every string of the response, what its data-URL payloads decode to).
 
-    The one planted public hostname that contains an internal suffix part-way
-    through is taken out first, so the suffix check is not tripped by it."""
+    Only whole sensitive values, in each way the bundle writes them, are looked
+    for: what a placeholder looks like, beyond not containing the value it
+    replaces, is up to the service."""
     _, body = ok(service_, bundle)
     case = json.loads(body)
     plain = "\n".join(
         str(v) for key in ("items", "events", "log_excerpts") for entry in case[key] for v in entry.values()
-    ).replace(truth.info["lookalike"], "")
+    )
     return plain, expanded(plain)[len(plain):]
 
 
@@ -868,7 +893,7 @@ def surrounding_text_kept(original, returned, spans):
     masked = unfolded(original)
     for value in sorted(spans, key=lambda v: (-len(v), v)):
         masked = masked.replace(value, "\x00")
-    pattern = "(?:.+?)".join(re.escape(part) for part in re.split("\x00+", masked))
+    pattern = "(?:[\\s\\S]+?)".join(re.escape(part) for part in re.split("\x00+", masked))
     return re.fullmatch(pattern, unfolded(returned)) is not None
 
 
@@ -929,6 +954,7 @@ def test_placeholders_are_consistent_and_injective(service):
         "sa": info["service_account"],
         "vault": info["vault"],
         "pull-secret": info["pull_secret"],
+        "bearer": info["bearer"],
         "cluster": bundle["cluster"]["name"],
         "infra": bundle["cluster"]["infra_id"],
         "bundle": bundle["bundle_id"],
@@ -949,10 +975,6 @@ def test_placeholders_are_consistent_and_injective(service):
         assert first is not None and second is not None, "probe log excerpts must be reported (%s)" % key
         assert first == second, "%s produced two different placeholders: %r vs %r" % (key, first, second)
         assert probes[key] not in first, "%s: placeholder still contains the value" % key
-        value = probes[key]
-        assert first[:4] != value[:4] and first[-4:] != value[-4:], (
-            "%s: only part of the value was replaced: %r" % (key, first)
-        )
         assert first not in seen, "%s and %s collapsed onto the same placeholder %r" % (key, seen[first], first)
         seen[first] = key
 
@@ -967,18 +989,24 @@ def test_same_value_maps_identically_in_different_fields(service):
         {"resource_id": "RES-probe", "kind": "Pod", "namespace": "probes", "name": "%s-%s" % (word, short),
          "condition": "PodPending", "node": fqdn, "replicas": None, "spec": {"containers": []}}
     )
-    bundle["evidence"]["events"].append(
-        {"event_id": "EV-probe", "reason": "Probing", "namespace": "probes", "count": 1, "message": fqdn}
-    )
-    bundle["evidence"]["log_excerpts"] += [{"source": "p-fqdn", "line": fqdn}, {"source": "p-short", "line": short}]
+    secret = list(info["env_secrets"].values())[2]
+    others = {"fqdn": fqdn, "credential": secret, "token": info["bearer"], "account": info["service_account"]}
+    for key, value in others.items():
+        bundle["evidence"]["events"].append(
+            {"event_id": "EV-probe-%s" % key, "reason": "Probing", "namespace": "probes", "count": 1, "message": value}
+        )
+        bundle["evidence"]["log_excerpts"].append({"source": "p-%s" % key, "line": value})
+    bundle["evidence"]["log_excerpts"].append({"source": "p-short", "line": short})
     case, _ = ok(service, bundle)
     item = [i for i in case["items"] if i["resource_id"] == "RES-probe"][0]
-    event = [e for e in case["events"] if e["event_id"] == "EV-probe"][0]
     lines = probe_lines(case, "p-")
     assert fqdn not in lines["p-fqdn"] and short not in lines["p-short"], "node names were not replaced"
-    assert event["message"] == lines["p-fqdn"], (
-        "the same host became %r in an event and %r in a log excerpt" % (event["message"], lines["p-fqdn"])
-    )
+    for key, value in others.items():
+        event = [e for e in case["events"] if e["event_id"] == "EV-probe-%s" % key][0]
+        assert value not in event["message"], "the %s was not replaced in an event message" % key
+        assert event["message"] == lines["p-%s" % key], (
+            "the same %s became %r in an event and %r in a log excerpt" % (key, event["message"], lines["p-%s" % key])
+        )
     assert item["node"] == lines["p-fqdn"], (
         "the same host became %r in an item's node and %r in a log excerpt" % (item["node"], lines["p-fqdn"])
     )
@@ -989,17 +1017,18 @@ def test_same_value_maps_identically_in_different_fields(service):
 
 
 def test_hostname_case_does_not_matter(service):
-    """DNS names are the same name in any case, so they share a placeholder."""
+    """DNS names are the same name in any case, so they share a placeholder,
+    including names of several labels under each suffix."""
     bundle, truth = generate(19)
     fqdn = truth.info["node_names"][0][1]
-    host = truth.info["hosts"][0]
+    names = [("fqdn", fqdn)] + [("host-%d" % i, host) for i, host in enumerate(truth.info["hosts"])]
     excerpts = bundle["evidence"]["log_excerpts"]
-    for key, value in (("fqdn", fqdn), ("host", host)):
+    for key, value in names:
         excerpts.append({"source": "c-%s-lower" % key, "line": "peer %s ok" % value})
         excerpts.append({"source": "c-%s-upper" % key, "line": "peer %s ok" % value.upper()})
     case, _ = ok(service, bundle)
     lines = probe_lines(case, "c-")
-    for key, value in (("fqdn", fqdn), ("host", host)):
+    for key, value in names:
         lower, upper = lines["c-%s-lower" % key], lines["c-%s-upper" % key]
         assert value not in lower and value.upper() not in upper, "%s was not replaced in both cases" % value
         assert lower == upper, "%s in upper case became %r but %r in lower case" % (value, upper, lower)
@@ -1009,7 +1038,10 @@ def test_mac_case_does_not_matter(service):
     """A MAC address is the same address in upper or lower case, so it has one placeholder."""
     bundle, truth = generate(43)
     excerpts = bundle["evidence"]["log_excerpts"]
-    macs = {"node": truth.info["node_macs"][0], "stray": truth.info["stray_mac"]}
+    rng = random.Random("mac-probe")
+    # Every octet carries a letter, so a part left unreplaced differs by case.
+    lettered = ":".join(rng.choice("abcdef") + rng.choice("0123456789abcdef") for _ in range(6))
+    macs = {"node": truth.info["node_macs"][0], "stray": truth.info["stray_mac"], "lettered": lettered}
     for key, value in macs.items():
         excerpts.append({"source": "m-%s-lower" % key, "line": "peer %s ok" % value})
         excerpts.append({"source": "m-%s-upper" % key, "line": "peer %s ok" % value.upper()})
@@ -1050,6 +1082,106 @@ def test_token_after_bearer_is_the_same_token(service):
     assert got_1 and bearer not in first + second, "the bearer token was not replaced: %r" % first
     assert got_1 == got_2, "one bearer token became %r and %r" % (got_1, got_2)
     assert got_1 != token, "two different tokens share the placeholder %r" % token
+
+
+def test_header_token_is_replaced_everywhere(service):
+    """A token sent in an Authorization header is a credential wherever else it
+    appears, and keeps its placeholder there."""
+    bundle, truth = generate(59)
+    bearer = truth.info["bearer"]
+    bundle["evidence"]["log_excerpts"] += [
+        {"source": "h-header", "line": "Authorization: Bearer %s; retrying" % bearer},
+        {"source": "h-plain", "line": "peer %s ok" % bearer},
+    ]
+    case, _ = ok(service, bundle)
+    lines = probe_lines(case, "h-")
+    head, tail = "Authorization: Bearer ", "; retrying"
+    header = lines["h-header"]
+    assert header.startswith(head) and header.endswith(tail), "text around the token changed: %r" % header
+    token = header[len(head):-len(tail)]
+    assert token and bearer not in header, "the token in the header was not replaced: %r" % header
+    assert lines["h-plain"] == "peer %s ok" % token, (
+        "the header token on its own became %r; in the header it is %r" % (lines["h-plain"], token)
+    )
+
+
+def test_short_header_token_is_a_credential_too(service):
+    """A short token sent in an Authorization header is replaced there and
+    wherever else it appears: length does not decide what is a credential."""
+    bundle, _ = generate(79)
+    rng = random.Random("short-token")
+    token = "".join(rng.choice(string.ascii_uppercase) + rng.choice(string.ascii_lowercase) + rng.choice(string.digits)
+                    for _ in range(3))
+    bundle["evidence"]["log_excerpts"] += [
+        {"source": "s-header", "line": "GET /healthz Authorization: Bearer %s -> 401" % token},
+        {"source": "s-plain", "line": "retrying with %s in 5s" % token},
+    ]
+    case, _ = ok(service, bundle)
+    lines = probe_lines(case, "s-")
+    head, tail = "GET /healthz Authorization: Bearer ", " -> 401"
+    header = lines["s-header"]
+    assert header.startswith(head) and header.endswith(tail), "text around the token changed: %r" % header
+    placeholder = header[len(head):-len(tail)]
+    assert placeholder and token not in header, "the short token in the header was not replaced: %r" % header
+    assert lines["s-plain"] == "retrying with %s in 5s" % placeholder, (
+        "the short header token elsewhere became %r; in the header it is %r" % (lines["s-plain"], placeholder)
+    )
+
+
+def test_declared_names_match_in_any_case(service):
+    """A node name, a sibling node, the API URL's host and the mirror endpoint
+    take the same placeholder in upper and lower case."""
+    bundle, truth = generate(61)
+    info = truth.info
+    api_url = info["api_url"]
+    host = api_url.split("://", 1)[1].split(":", 1)[0]
+    values = {
+        "node": info["node_names"][1][0],
+        "sibling": info["unlisted"],
+        "api-url": (api_url, api_url.replace(host, host.upper())),
+        "mirror": info["mirror"],
+    }
+    excerpts = bundle["evidence"]["log_excerpts"]
+    for key, value in values.items():
+        lower, upper = value if isinstance(value, tuple) else (value, value.upper())
+        excerpts.append({"source": "n-%s-lower" % key, "line": "peer %s ok" % lower})
+        excerpts.append({"source": "n-%s-upper" % key, "line": "peer %s ok" % upper})
+    case, _ = ok(service, bundle)
+    lines = probe_lines(case, "n-")
+    wrong = []
+    for key, value in values.items():
+        lower, upper = value if isinstance(value, tuple) else (value, value.upper())
+        got_lower, got_upper = lines["n-%s-lower" % key], lines["n-%s-upper" % key]
+        if lower in got_lower or upper in got_upper or got_lower != got_upper:
+            wrong.append("%s: %r became %r but %r became %r" % (key, lower, got_lower, upper, got_upper))
+    assert not wrong, "names were not replaced the same way in both cases:\n" + "\n".join(wrong)
+
+
+def test_reverse_dns_name_is_read_backwards(service):
+    """A reverse-DNS name stands for the address it names, even when its digits,
+    read forwards, are another cluster address."""
+    bundle, _ = generate(53)
+    excerpts = bundle["evidence"]["log_excerpts"]
+    pairs = {}
+    for second in (44, 128, 130):
+        named = "10.%d.21.10" % second            # the address the reverse name stands for
+        forwards = "10.21.%d.10" % second         # its digits read forwards: also a cluster address
+        pairs[second] = (named, forwards)
+        excerpts.append({"source": "r-named-%d" % second, "line": "peer %s ok" % named})
+        excerpts.append({"source": "r-forwards-%d" % second, "line": "peer %s ok" % forwards})
+        excerpts.append({"source": "r-ptr-%d" % second, "line": "peer %s ok" % reverse_name(named)})
+    case, _ = ok(service, bundle)
+    lines = probe_lines(case, "r-")
+    wrong = []
+    for second, (named, forwards) in pairs.items():
+        p_named = placeholder_in(lines["r-named-%d" % second], "a plain address")
+        p_forwards = placeholder_in(lines["r-forwards-%d" % second], "a plain address")
+        assert named not in p_named and forwards not in p_forwards, "plain addresses were not replaced"
+        assert p_named != p_forwards, "two addresses share the placeholder %r" % p_named
+        got = placeholder_in(lines["r-ptr-%d" % second], "a reverse-DNS name")
+        if got != "%s.in-addr.arpa" % p_named:
+            wrong.append("%s: got %r, want %r" % (reverse_name(named), got, "%s.in-addr.arpa" % p_named))
+    assert not wrong, "reverse-DNS names took the wrong address's placeholder:\n" + "\n".join(wrong)
 
 
 def placeholder_in(line, label):
@@ -1249,6 +1381,21 @@ def test_restart_reproduces_the_response_for_reordered_input():
     with Service() as second_run:
         _, second = ok(second_run, reordered(bundle))
     assert first == second, "reordered input to a restarted service produced different bytes"
+
+
+def test_restart_reproduces_the_response_after_other_bundles():
+    """A service that has already handled other bundles gives the same bytes for a
+    bundle as a freshly started one, so nothing carries over between requests."""
+    bundle, _ = generate(67)
+    others = [generate(71)[0], generate(73)[0]]
+    with Service() as busy:
+        for other in others:
+            ok(busy, other)
+        _, after_others = ok(busy, bundle)
+    time.sleep(CLOCK_STEP)
+    with Service() as fresh:
+        _, first = ok(fresh, bundle)
+    assert after_others == first, "the response depended on bundles handled earlier"
 
 
 # ---------------------------------------------------------------------------

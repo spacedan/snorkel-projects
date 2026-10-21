@@ -87,12 +87,24 @@
       "line": "2026-09-13T02:40:30Z I: pod ledger-api-7d9c4b8f5-2xkqp unschedulable on [redacted-5]; preempting toward [redacted-17] (0/2 nodes available)"
     },
     {
+      "source": "cluster-autoscaler",
+      "line": "2026-09-13T02:40:33Z I: scale-down candidates [redacted-5], [redacted-17]; readiness probe [redacted-9]/readyz returned 503"
+    },
+    {
       "source": "ledger-api",
       "line": "2026-09-13T02:41:08Z FATAL db: password authentication failed for user ledger (tried [redacted-18]) at [redacted-19]:5432; log level debug, region us-east-fin-2, key file /etc/pki/tls/private/ledger.key"
     },
     {
       "source": "ledger-api",
       "line": "2026-09-13T02:41:09Z ERROR startup: failed to reach https://[redacted-20]:8200/v1/secret/data/fin/ledger (status 403, token [redacted-21]) from pod [redacted-22]; retried with Authorization: Bearer [redacted-23]; giving up"
+    },
+    {
+      "source": "ledger-api",
+      "line": "2026-09-13T02:41:10Z DEBUG cache entry [redacted-23] evicted after 300s"
+    },
+    {
+      "source": "logshipper",
+      "line": "2026-09-13T02:41:11Z WARN forward to fluentd failed: handshake rejected for [redacted-24]"
     },
     {
       "source": "ledger-api",
@@ -108,11 +120,11 @@
     },
     {
       "source": "coredns",
-      "line": "2026-09-13T02:41:14Z [INFO] [redacted-22]:38112 - 9120 \"A IN [redacted-24]. udp 78 false 512\" NXDOMAIN qr,aa,rd 171 0.000098s"
+      "line": "2026-09-13T02:41:14Z [INFO] [redacted-22]:38112 - 9120 \"A IN [redacted-25]. udp 78 false 512\" NXDOMAIN qr,aa,rd 171 0.000098s"
     },
     {
       "source": "metallb-controller",
-      "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned [redacted-25]-[redacted-26]; next free [redacted-27]"
+      "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned [redacted-26]-[redacted-27]; next free [redacted-28]; announcing broadcast [redacted-29]"
     }
   ]
 }

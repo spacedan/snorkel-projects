@@ -15,7 +15,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SERVICE = "sluice-intake"
-VERSION = "6.0.0"
+VERSION = "7.0.0"
 
 CLUSTER_RANGES = [
     ipaddress.ip_network("10.21.0.0/16"),
@@ -27,7 +27,7 @@ CLUSTER_RANGES = [
 CLUSTER_DNS_SUFFIXES = [".mesa.internal", ".svc.cluster.local", ".cluster.local"]
 SECRET_ENV_HINTS = ["PASS", "SECRET", "TOKEN", "CRED", "AUTH", "KEY"]
 
-SALT = b"sluice-intake-redaction-v6"
+SALT = b"sluice-intake-redaction-v7"
 
 _SUF = "|".join(re.escape(s) for s in CLUSTER_DNS_SUFFIXES)
 _NAME = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
@@ -61,11 +61,7 @@ PLACEHOLDER_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 PLACEHOLDER_WRAPPERS = [("[", "]"), ("<", ">"), ("{", "}"), ("(", ")"), ("|", "|"), ("#", "#"), ("~", "~")]
 
 
-def canonical(value):
-    """One key per value however it is written: hostnames and MACs ignore case."""
-    if RE_MAC.fullmatch(value) or RE_INTERNAL_HOST.fullmatch(value):
-        return value.lower()
-    return value
+RE_BEARER_HEADER = re.compile(r"\bAuthorization:\s*Bearer\s+(%s)" % _TOKEN, re.IGNORECASE)
 
 
 def is_ipv4(text):
@@ -83,7 +79,8 @@ class Redactor:
         evidence = bundle.get("evidence") or {}
         cluster = bundle.get("cluster") or {}
 
-        literals = [
+        # Names, accounts, URLs and endpoints: the same in any letter case.
+        names = [
             bundle.get("submitted_by"),
             bundle.get("bundle_id"),
             cluster.get("name"),
@@ -101,13 +98,15 @@ class Redactor:
                 # form of a node address resolves to one placeholder.
                 self.node_ips.add(ip)
             else:
-                literals.append(ip)
-            literals.append(mac)
+                names.append(ip)
+            names.append(mac)
             if isinstance(name, str) and name:
                 short = name.split(".")[0]
-                literals += [name, short]
-                prefixes.add(re.sub(r"-\d+$", "", short))
+                names += [name, short]
+                prefixes.add(re.sub(r"-\d+$", "", short).lower())
 
+        # Credentials: exact strings, case and all.
+        secrets = []
         for res in evidence.get("resources") or []:
             for container in (res.get("spec") or {}).get("containers") or []:
                 for var in container.get("env") or []:
@@ -115,10 +114,15 @@ class Redactor:
                     if not isinstance(key, str) or not isinstance(value, str):
                         continue
                     if SECRET_ENV_HINT.search(key) and not value.startswith("/"):
-                        literals.append(value)
+                        secrets.append(value)
+        # A token sent in an Authorization header is a credential wherever else it appears.
+        for text in _bundle_text(bundle):
+            secrets += [m.group(1) for m in RE_BEARER_HEADER.finditer(text)]
 
-        self.literals = sorted({v for v in literals if isinstance(v, str) and v.strip()})
-        self.families = [re.compile(r"\b%s-\d+\b" % re.escape(p)) for p in sorted(prefixes) if p]
+        keep = lambda values: sorted({v for v in values if isinstance(v, str) and v.strip()})
+        self.names = [(re.compile(re.escape(v), re.IGNORECASE), v.lower()) for v in keep(names)]
+        self.secrets = keep(secrets)
+        self.families = [re.compile(r"\b%s-\d+\b" % re.escape(p), re.IGNORECASE) for p in sorted(prefixes) if p]
 
     def token(self, key):
         """Placeholder for one canonical value: stable across processes, never
@@ -192,14 +196,19 @@ class Redactor:
         """Every candidate replacement in the original text: (start, end, rank, key)."""
         for match in RE_INTERNAL_HOST.finditer(text):
             yield match.start(), match.end(), 0, match.group(0).lower()
-        for literal in self.literals:
+        for pattern, key in self.names:
+            match = pattern.search(text)
+            while match:
+                yield match.start(), match.end(), 1, key
+                match = pattern.search(text, match.start() + 1)
+        for literal in self.secrets:
             start = text.find(literal)
             while start != -1:
-                yield start, start + len(literal), 1, canonical(literal)
+                yield start, start + len(literal), 1, literal
                 start = text.find(literal, start + 1)
         for pattern in self.families:
             for match in pattern.finditer(text):
-                yield match.start(), match.end(), 2, match.group(0)
+                yield match.start(), match.end(), 2, match.group(0).lower()
         for match in RE_MAC.finditer(text):
             yield match.start(), match.end(), 3, match.group(0).lower()
         for match in RE_ADDRESS.finditer(text):
@@ -235,6 +244,25 @@ class Redactor:
             cursor = end
         out.append(text[cursor:])
         return "".join(out)
+
+
+def _bundle_text(value):
+    """Every string in the bundle, with data-URL payloads decoded, recursively."""
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _bundle_text(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _bundle_text(item)
+    elif isinstance(value, str):
+        yield value
+        for match in RE_DATA_URL.finditer(value):
+            try:
+                raw = base64.b64decode(match.group(2), validate=True)
+                raw = gzip.decompress(raw) if raw[:2] == GZIP_MAGIC else raw
+                yield from _bundle_text(raw.decode("utf-8"))
+            except (binascii.Error, ValueError, OSError, EOFError, UnicodeDecodeError, zlib.error):
+                continue
 
 
 def build_case(bundle):

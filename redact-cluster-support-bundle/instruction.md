@@ -1,4 +1,4 @@
-There is an intake service at `/app/sluice/intake_server.py` which turns a collected Kubernetes cluster support bundle into the case summary that we're cleared to send to the vendor. Right now it copies the whole bundle into its response, so everything that with sensitive identifying information leaves with it, and two runs over the same bundle don't produce the same summary.
+There is an intake service at `/app/sluice/intake_server.py` which turns a collected Kubernetes cluster support bundle into the case summary that we're cleared to send to the vendor. Right now it copies the whole bundle into its response, so everything with sensitive identifying information leaves with it, and two runs over the same bundle don't produce the same summary.
 
 Fix it. Keep the service at that path, keep the `--port` option working, and keep accepting a bundle as `POST /intake`. Use the standard library only.
 

@@ -135,6 +135,13 @@
         "message": "Node infra-gpu-01.ocp-edge-nw.mesa.internal status is now: NodeNotReady (kubelet at 192.168.50.21 stopped posting)"
       },
       {
+        "event_id": "EV-91229",
+        "reason": "FailedLogin",
+        "namespace": "nvidia-gpu-operator",
+        "count": 12,
+        "message": "NGC registry login rejected for key nvapi-3Tq8ZrLw0PdK6sYv; caller system:serviceaccount:nvidia-gpu-operator:gpu-operator"
+      },
+      {
         "event_id": "EV-91233",
         "reason": "Failed",
         "namespace": "nvidia-gpu-operator",
@@ -176,8 +183,20 @@
         "line": "2026-09-16T11:05:40Z pulled docker.io/library/busybox@sha256:9d75f0d7c398df565d7ac04c6819b62d6d8f9560f5eb4672596ecd8f7e96ae91 for debug pod on infra-gpu-02"
       },
       {
+        "source": "crio",
+        "line": "2026-09-16T11:05:42Z retrying MIRROR.CORP.EXAMPLE.NET:5000/nvidia/driver after auth failure"
+      },
+      {
         "source": "kubelet",
         "line": "2026-09-16T11:05:44Z E: image pull for nvidia-driver denied by mirror; credentials in use: eyJhdXRocyI6eyJtaXJyb3IuY29ycC5leGFtcGxlLm5ldDo1MDAwIjp7ImF1dGgiOiJaV1JuWlMxd2RXeHNPbHByTkhkeE9WUnlUREoyVFE9PSJ9fX0= (from edge-mirror-creds)"
+      },
+      {
+        "source": "gpu-operator",
+        "line": "2026-09-16T11:05:50Z I: reconciling ClusterPolicy as system:serviceaccount:nvidia-gpu-operator:gpu-operator"
+      },
+      {
+        "source": "dcgm-exporter",
+        "line": "2026-09-16T11:05:55Z W: metrics scrape refused, Authorization: Bearer QwErTyUiOpAsDfGhJkLzXcVb is not valid for this endpoint"
       },
       {
         "source": "vault-agent",

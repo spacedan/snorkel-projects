@@ -65,6 +65,10 @@
                 {
                   "name": "FLUENT_ENDPOINT",
                   "value": "fluentd.observability.svc.cluster.local:24224"
+                },
+                {
+                  "name": "FLUENT_SHARED_KEY",
+                  "value": "fl7Hq2Zr9WkP4mXc"
                 }
               ],
               "volumeMounts": []
@@ -224,12 +228,24 @@
         "line": "2026-09-13T02:40:30Z I: pod ledger-api-7d9c4b8f5-2xkqp unschedulable on worker-04; preempting toward worker-09 (0/2 nodes available)"
       },
       {
+        "source": "cluster-autoscaler",
+        "line": "2026-09-13T02:40:33Z I: scale-down candidates WORKER-04, WORKER-09; readiness probe https://API.OCP-PROD-EAST.MESA.INTERNAL:6443/readyz returned 503"
+      },
+      {
         "source": "ledger-api",
         "line": "2026-09-13T02:41:08Z FATAL db: password authentication failed for user ledger (tried Pg!7yhTr2026mesa) at postgres-primary.fin-ledger-prod.svc.cluster.local:5432; log level debug, region us-east-fin-2, key file /etc/pki/tls/private/ledger.key"
       },
       {
         "source": "ledger-api",
         "line": "2026-09-13T02:41:09Z ERROR startup: failed to reach https://vault.mesa.internal:8200/v1/secret/data/fin/ledger (status 403, token hvs.CAESIJx9Qm2rT4kLp8WdN1zY) from pod 10.128.7.212; retried with Authorization: Bearer 8fK2mQx7Lr0vT1nZc5Wd3Ys; giving up"
+      },
+      {
+        "source": "ledger-api",
+        "line": "2026-09-13T02:41:10Z DEBUG cache entry 8fK2mQx7Lr0vT1nZc5Wd3Ys evicted after 300s"
+      },
+      {
+        "source": "logshipper",
+        "line": "2026-09-13T02:41:11Z WARN forward to fluentd failed: handshake rejected for fl7Hq2Zr9WkP4mXc"
       },
       {
         "source": "ledger-api",
@@ -249,7 +265,7 @@
       },
       {
         "source": "metallb-controller",
-        "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned 10.21.40.10-10.21.40.50; next free 10.21.40.23"
+        "line": "2026-09-13T02:30:00Z I: pool fin-lb assigned 10.21.40.10-10.21.40.50; next free 10.21.40.23; announcing broadcast 10.21.255.255"
       }
     ]
   }

@@ -53,6 +53,10 @@
       "line": "2026-09-14T06:09:40Z I: node subnet [redacted-9]/23 allocated from cluster network [redacted-10]/14; service network [redacted-11]/16; egress to 151.101.0.0/16 allowed; partner network 10.132.0.0/16 reached via 172.31.0.4"
     },
     {
+      "source": "machine-config-daemon",
+      "line": "2026-09-14T06:08:55Z I: writing file /etc/kubernetes/kubelet-ca.json contents data:application/json;base64,eyJhcGlWZXJzaW9uIjoidjEiLCJraW5kIjoiQ29uZmlnTWFwIiwiZGF0YSI6eyJyb3RhdGlvbiI6IjMwZCIsImlzc3VlciI6Imt1YmVsZXQtc2lnbmVyIn19 mode 0644"
+    },
+    {
       "source": "cluster-version-operator",
       "line": "2026-09-14T06:10:02Z I: Retrieving payload quay.io/openshift-release-dev/ocp-release@sha256:34d634a0c5483692c78ecc3ab48eacb237a8fa36071b2b192b04fc155c48b37d mirrored to [redacted-4]/openshift-release-dev/ocp-release"
     },
@@ -69,12 +73,20 @@
       "line": "2026-09-14T06:12:40Z I | embed: serving client requests on [redacted-15]:2379 and [redacted-5]:2379 using /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer.key"
     },
     {
+      "source": "kube-rbac-proxy",
+      "line": "2026-09-14T06:12:41Z E: GET /metrics Authorization: Bearer [redacted-16] -> 401 Unauthorized"
+    },
+    {
+      "source": "prometheus",
+      "line": "2026-09-14T06:12:42Z W: scrape client [redacted-16] backing off for 30s"
+    },
+    {
       "source": "etcd",
       "line": "2026-09-14T06:12:44Z W | rafthttp: health check for peer 8e9f11a2c4d70b53 could not connect: dial tcp [redacted-5]:2380: i/o timeout (prober \"ROUND_TRIPPER_SNAPSHOT\")"
     },
     {
       "source": "kubelet",
-      "line": "2026-09-14T06:13:02Z I: lease for [redacted-16] renewed through [redacted-3]; standby [redacted-17] ([redacted-18]) has not registered"
+      "line": "2026-09-14T06:13:02Z I: lease for [redacted-17] renewed through [redacted-3]; standby [redacted-18] ([redacted-19]) has not registered"
     }
   ]
 }

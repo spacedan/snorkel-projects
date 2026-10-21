@@ -41,10 +41,6 @@ CLUSTER_RANGES = [
 ]
 CLUSTER_DNS_SUFFIXES = [".mesa.internal", ".svc.cluster.local", ".cluster.local"]
 
-# Registries the vendor publishes from. Images pulled from anywhere else came
-# out of the disconnected mirror.
-UPSTREAM_REGISTRIES = ["quay.io", "registry.redhat.io", "ghcr.io", "docker.io"]
-
 # Container env vars whose name contains one of these carry credential material,
 # unless the value is just a path to where the credential is mounted.
 SECRET_ENV_HINTS = ["PASS", "SECRET", "TOKEN", "CRED", "AUTH", "KEY"]
